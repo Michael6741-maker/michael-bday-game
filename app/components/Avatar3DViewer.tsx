@@ -12,6 +12,7 @@ import {
   getEmoteAnimationId,
   isLoadableAvatarTextureUrl,
 } from '../lib/avatarItems';
+import { createAvatarFaceOverlayGeometry } from '../lib/faceOverlay';
 
 interface Avatar3DViewerProps {
   layers: Partial<Record<AvatarPartType, AvatarItem>>;
@@ -141,14 +142,22 @@ function HeadMesh({
   );
 }
 
-/** 2D face expression plane composited on the 3D head (MIE-18). */
+/**
+ * Face expression decal on the 3D head (MIE-18 / MIE-45).
+ * Uses a partial sphere shell concentric with `HeadMesh` so the texture is not buried
+ * inside the opaque head sphere (that bug showed only the texture edges down the sides).
+ */
 function FaceOverlay({ url }: { url: string }) {
   const map = useSafeTexture(url);
+  const geometry = useMemo(() => createAvatarFaceOverlayGeometry(), []);
+  useEffect(() => {
+    return () => geometry.dispose();
+  }, [geometry]);
+
   if (!map) return null;
   return (
-    <mesh position={[0, 1.52, 0.33]}>
-      <planeGeometry args={[0.55, 0.55]} />
-      <meshBasicMaterial map={map} transparent alphaTest={0.05} />
+    <mesh position={[0, 1.5, 0]} geometry={geometry}>
+      <meshBasicMaterial map={map} transparent alphaTest={0.05} depthWrite={false} />
     </mesh>
   );
 }
