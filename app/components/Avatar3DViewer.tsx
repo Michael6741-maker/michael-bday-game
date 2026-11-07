@@ -57,49 +57,124 @@ class AvatarViewerErrorBoundary extends Component<
   }
 }
 
+/** Local and remote SVGs cannot be uploaded straight to WebGL (MIE-40 / MIE-43). */
+function isSvgTextureUrl(url: string): boolean {
+  return url.startsWith('data:image/svg') || /\.svg(\?|#|$)/i.test(url);
+}
+
+/**
+ * Draw an SVG (or any image) into a canvas and return a PNG data URL.
+ * Face overlays ship as SVG; TextureLoader's SVG path paints a blank plane on
+ * several browsers, which made the head look like an untextured sticker.
+ */
+function rasterizeImageUrl(url: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      const size = 256;
+      const canvas = document.createElement('canvas');
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        reject(new Error('2d context unavailable'));
+        return;
+      }
+      ctx.clearRect(0, 0, size, size);
+      ctx.drawImage(img, 0, 0, size, size);
+      resolve(canvas.toDataURL('image/png'));
+    };
+    img.onerror = () => reject(new Error(`image failed: ${url}`));
+    img.src = url;
+  });
+}
+
 /**
  * Load a texture without Suspense/useLoader — failed URLs fall back to skin tint (MIE-40).
+ * The mesh starts untextured and receives `map` on a later commit. Callers must remount
+ * the material when this flips from null to a texture (see WearMaterial).
  */
 function useSafeTexture(url: string | null): Texture | null {
-  const [map, setMap] = useState<Texture | null>(null);
+  // Invalid URLs never enter state — the hook just renders skin until a real URL arrives.
+  const loadable = url && isLoadableAvatarTextureUrl(url) ? url : null;
+  const [loaded, setLoaded] = useState<{ url: string; map: Texture } | null>(null);
 
   useEffect(() => {
-    if (!url || !isLoadableAvatarTextureUrl(url)) {
-      setMap(null);
-      return;
-    }
+    if (!loadable) return;
 
     let cancelled = false;
     const loader = new TextureLoader();
-    loader.load(
-      url,
-      (tex) => {
-        if (cancelled) {
-          tex.dispose();
-          return;
-        }
-        tex.colorSpace = SRGBColorSpace;
-        setMap(tex);
-      },
-      undefined,
-      () => {
-        if (!cancelled) {
-          console.warn('[Avatar3DViewer] texture failed to load — using skin tint', url);
-          setMap(null);
-        }
-      },
-    );
 
-    return () => {
-      cancelled = true;
-      setMap((prev) => {
-        prev?.dispose();
+    const apply = (tex: Texture) => {
+      if (cancelled) {
+        tex.dispose();
+        return;
+      }
+      tex.colorSpace = SRGBColorSpace;
+      tex.needsUpdate = true;
+      setLoaded((prev) => {
+        if (prev && prev.map !== tex) prev.map.dispose();
+        return { url: loadable, map: tex };
+      });
+    };
+
+    const fail = () => {
+      if (cancelled) return;
+      console.warn('[Avatar3DViewer] texture failed to load — using skin tint', loadable);
+      setLoaded((prev) => {
+        if (prev?.url !== loadable) return prev;
+        prev.map.dispose();
         return null;
       });
     };
-  }, [url]);
 
-  return map;
+    const run = async () => {
+      try {
+        // Rasterize SVG first so the GPU never sees an SVG image element.
+        const loadUrl = isSvgTextureUrl(loadable) ? await rasterizeImageUrl(loadable) : loadable;
+        if (cancelled) return;
+        loader.load(loadUrl, apply, undefined, fail);
+      } catch {
+        fail();
+      }
+    };
+
+    void run();
+
+    return () => {
+      cancelled = true;
+      setLoaded((prev) => {
+        if (prev?.url !== loadable) return prev;
+        prev.map.dispose();
+        return null;
+      });
+    };
+  }, [loadable]);
+
+  if (!loadable || loaded?.url !== loadable) return null;
+  return loaded.map;
+}
+
+/**
+ * Body material that actually shows a wear texture.
+ *
+ * MIE-40 switched texture loading off `useLoader` (which suspended until the
+ * map existed) onto an async state update. Three compiles a different shader
+ * when `map` is null. Assigning `map` afterwards does not recompile that
+ * program, so shirts/pants/hair stayed a flat skin-colored block — the
+ * "avatars are 2D again" regression (MIE-43). Remounting via `key` builds the
+ * textured shader with the map already attached.
+ */
+function WearMaterial({ map, color }: { map: Texture | null; color: string }) {
+  return (
+    <meshStandardMaterial
+      color={map ? '#ffffff' : color}
+      map={map ?? undefined}
+      roughness={0.62}
+      metalness={0.04}
+    />
+  );
 }
 
 /** Body-part box mesh — skin tint when texture is missing or fails to load (MIE-38 / MIE-40). */
@@ -119,7 +194,8 @@ function PartMesh({
   return (
     <mesh position={position} castShadow>
       <boxGeometry args={size} />
-      <meshStandardMaterial color={color} map={map ?? undefined} />
+      {/* Key lives on the parent so React remounts the material when the map arrives. */}
+      <WearMaterial key={map ? 'textured' : 'skin'} map={map} color={color} />
     </mesh>
   );
 }
@@ -137,7 +213,7 @@ function HeadMesh({
   return (
     <mesh position={[0, 1.5, 0]} castShadow>
       <sphereGeometry args={[0.38, 24, 24]} />
-      <meshStandardMaterial color={color} map={map ?? undefined} />
+      <WearMaterial key={map ? 'textured' : 'skin'} map={map} color={color} />
     </mesh>
   );
 }
@@ -280,9 +356,11 @@ function AvatarScene({
 }) {
   return (
     <>
-      <ambientLight intensity={0.85} />
-      <directionalLight position={[3, 5, 4]} intensity={1.1} castShadow />
-      <directionalLight position={[-2, 2, -3]} intensity={0.35} />
+      {/* Lower ambient so the side faces stay darker — a front-on wash made the
+          rig read as a flat sprite even after textures loaded (MIE-43). */}
+      <ambientLight intensity={0.42} />
+      <directionalLight position={[2.6, 4.2, 3.2]} intensity={1.45} castShadow />
+      <directionalLight position={[-2.4, 1.6, -2.2]} intensity={0.38} />
       <Suspense fallback={null}>
         <AvatarRig
           layers={layers}
@@ -319,7 +397,8 @@ export default function Avatar3DViewer({
     <div className={`relative w-40 h-64 sm:w-48 sm:h-72 ${className}`}>
       <AvatarViewerErrorBoundary>
         <Canvas
-          camera={{ position: [0, 0.8, 3.2], fov: 42 }}
+          // Three-quarter start so depth is visible before the player drags.
+          camera={{ position: [1.05, 1.12, 2.65], fov: 40 }}
           shadows
           gl={{ antialias: true, alpha: true }}
           style={{ background: 'transparent' }}
