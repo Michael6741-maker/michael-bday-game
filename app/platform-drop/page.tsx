@@ -151,22 +151,24 @@ export default function Home() {
             <label className="block text-sm font-medium text-gray-700 mb-2 sm:mb-3 w-full text-center md:text-left">
               Your Avatar
             </label>
-            <button
-              type="button"
-              onClick={handleOpenAvatars}
-              className="group rounded-2xl p-3 bg-purple-50 ring-2 ring-purple-200 hover:ring-purple-400 hover:-translate-y-1 hover:shadow-glow-sm transition-all duration-200"
-              aria-label="Open avatar shop"
-            >
+            {/* The 3D canvas must not live inside this button. A wrapping <button>
+                turned drag-to-rotate into a navigation click, so the rig stayed
+                locked to its front face and read as a flat picture (MIE-43). */}
+            <div className="rounded-2xl p-3 bg-purple-50 ring-2 ring-purple-200 w-full flex flex-col items-center">
               <Avatar3DViewer
                 layers={equippedLayers}
                 skinColor={currentUser?.skinColor ?? DEFAULT_SKIN_COLOR}
                 enableRotation
-                className="pointer-events-auto"
               />
-              <p className="text-xs text-purple-700 font-medium mt-2 group-hover:underline">
+              <button
+                type="button"
+                onClick={handleOpenAvatars}
+                className="text-xs text-purple-700 font-medium mt-2 hover:underline min-h-[44px] px-3"
+                aria-label="Open avatar shop"
+              >
                 Customize Avatar →
-              </p>
-            </button>
+              </button>
+            </div>
             {currentUser && (
               <div className="mt-3 flex items-center gap-2 text-xs text-gray-500">
                 <span>Leaderboard:</span>
