@@ -9,7 +9,9 @@ import {
   DEFAULT_SKIN_COLOR,
   getAvatarFaceOverlayUrl,
   getAvatarPartTextureUrl,
+  getAccessoryRigPosition,
   getEmoteAnimationId,
+  isHeadlessAvatarLook,
   isLoadableAvatarTextureUrl,
 } from '../lib/avatarItems';
 import { createAvatarFaceOverlayGeometry } from '../lib/faceOverlay';
@@ -256,7 +258,9 @@ function AvatarRig({
   const rightArmRef = useRef<Group>(null);
   const emoteItem = layers.emote;
   const emoteId = emoteActive ? getEmoteAnimationId(emoteItem) : null;
-  const faceUrl = getAvatarFaceOverlayUrl(layers.face);
+  const headless = isHeadlessAvatarLook(layers);
+  const faceUrl = headless ? null : getAvatarFaceOverlayUrl(layers.face);
+  const accessoryPosition = getAccessoryRigPosition(headless);
 
   const textures = useMemo(() => {
     const resolve = (part: AvatarPartType, item?: AvatarItem) => {
@@ -294,8 +298,8 @@ function AvatarRig({
 
   return (
     <group position={[0, -0.2, 0]}>
-      {/* Head — wear texture when equipped/drafted, else skin tint (MIE-41) */}
-      <HeadMesh textureUrl={textures.head} color={skinColor} />
+      {/* Head — hidden when wearing Headless Head; otherwise wear texture or skin (MIE-47). */}
+      {!headless && <HeadMesh textureUrl={textures.head} color={skinColor} />}
 
       {/* Hair */}
       <PartMesh textureUrl={textures.hair} color={skinColor} position={[0, 1.82, 0]} size={[0.72, 0.28, 0.5]} />
@@ -330,9 +334,14 @@ function AvatarRig({
       <PartMesh textureUrl={textures.foot} color={skinColor} position={[-0.18, -0.92, 0.06]} size={[0.26, 0.14, 0.34]} />
       <PartMesh textureUrl={textures.foot} color={skinColor} position={[0.18, -0.92, 0.06]} size={[0.26, 0.14, 0.34]} />
 
-      {/* Accessory (hat/backpack region) */}
+      {/* Accessory — anchors at the head when headless so sunglasses float (MIE-47). */}
       {textures.accessory && (
-        <PartMesh textureUrl={textures.accessory} color="#ffffff" position={[0.28, 1.1, -0.1]} size={[0.2, 0.2, 0.2]} />
+        <PartMesh
+          textureUrl={textures.accessory}
+          color="#ffffff"
+          position={accessoryPosition}
+          size={headless ? [0.42, 0.16, 0.12] : [0.2, 0.2, 0.2]}
+        />
       )}
 
       {/* Face expression overlay */}

@@ -6,6 +6,7 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { getCurrentUser, setCurrentUser } from '../lib/auth';
 import {
+  ensureHeadlessHeadCatalogItem,
   ensureUserAvatarMigration,
   subscribeToAvatarItems,
   purchaseAvatarItem,
@@ -59,6 +60,10 @@ export default function AvatarsClient() {
       router.push('/login');
       return;
     }
+
+    void ensureHeadlessHeadCatalogItem().catch(() => {
+      /* Non-blocking — shop still works if seed fails offline */
+    });
 
     ensureUserAvatarMigration(current.username)
       .then((migrated) => {

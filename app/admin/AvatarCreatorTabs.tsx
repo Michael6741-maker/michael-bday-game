@@ -10,6 +10,7 @@ import {
 import {
   AVATAR_PART_TYPES,
   AVATAR_PART_LABELS,
+  HEADLESS_HEAD_ITEM_ID,
   mergeAvatarCatalog,
   UGC_TEXTURE_PART_TYPES,
 } from '../lib/avatarItems';
@@ -158,6 +159,10 @@ export function AvatarListTab() {
   };
 
   const handleDelete = async (itemId: string) => {
+    if (itemId === HEADLESS_HEAD_ITEM_ID) {
+      alert('Headless Head is a seeded limited item and cannot be deleted.');
+      return;
+    }
     if (!confirm('Delete this avatar item?')) return;
     await deleteAvatarItem(itemId);
     setMenuOpen(null);
