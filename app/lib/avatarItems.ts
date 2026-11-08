@@ -179,6 +179,38 @@ export const BUILTIN_AVATAR_ITEMS: AvatarItem[] = [
 
 export const STARTER_OWNED_ITEM_IDS = BUILTIN_AVATAR_ITEMS.map((item) => item.id);
 
+/** Limited head-wear catalog row — seeded to Firestore on first /avatars visit (MIE-47). */
+export const HEADLESS_HEAD_ITEM_ID = 'headless-head-limited';
+
+/** Doc body for `ensureHeadlessHeadCatalogItem` / admin seed script (MIE-47). */
+export const HEADLESS_HEAD_CATALOG_FIELDS: Omit<AvatarItem, 'id' | 'createdAtMs' | 'updatedAtMs'> = {
+  name: 'Headless Head',
+  description: 'Removes your head. Sunglasses float where it used to be.',
+  creatorUsername: 'SYSTEM',
+  partType: 'head',
+  gemPrice: 1000,
+  onSale: true,
+  stock: 20_000,
+  previewImageUrl: '/headless-head-preview.svg',
+  hidesHead: true,
+  hidesFace: true,
+  source: 'system',
+};
+
+/** True when the equipped head item should suppress the default skin head (MIE-47). */
+export function isHeadlessAvatarLook(
+  layers: Partial<Record<AvatarPartType, AvatarItem>>
+): boolean {
+  const head = layers.head;
+  if (!head) return false;
+  return Boolean(head.hidesHead || head.id === HEADLESS_HEAD_ITEM_ID);
+}
+
+/** Accessory anchor — floats at the old head position when headless (MIE-47). */
+export function getAccessoryRigPosition(headless: boolean): [number, number, number] {
+  return headless ? [0, 1.5, 0] : [0.28, 1.1, -0.1];
+}
+
 /** Default equipped starter loadout for new / migrated users (MIE-16). */
 export function createStarterEquippedAvatar(): EquippedAvatar {
   return {

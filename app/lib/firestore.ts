@@ -52,6 +52,8 @@ import { getGamepassById, VIP_BALL_ID, type GamepassId } from './gamepasses';
 import { getBallTypeById, getBallGiftGemPrice, isBallGiftable } from './ballTypes';
 import {
   createStarterEquippedAvatar,
+  HEADLESS_HEAD_CATALOG_FIELDS,
+  HEADLESS_HEAD_ITEM_ID,
   isLoadableAvatarTextureUrl,
   normalizeUserAvatarFields,
   STARTER_OWNED_ITEM_IDS,
@@ -1655,6 +1657,23 @@ export async function ensureUserAvatarMigration(username: string): Promise<User>
   return normalized;
 }
 
+/**
+ * One-time catalog seed for Headless Head (MIE-47). Never overwrites stock if the doc exists.
+ */
+export async function ensureHeadlessHeadCatalogItem(): Promise<void> {
+  const ref = doc(db, AVATAR_ITEMS_COLLECTION, HEADLESS_HEAD_ITEM_ID);
+  const snap = await getDoc(ref);
+  if (snap.exists()) return;
+
+  const now = Date.now();
+  await setDoc(ref, {
+    id: HEADLESS_HEAD_ITEM_ID,
+    ...HEADLESS_HEAD_CATALOG_FIELDS,
+    createdAtMs: now,
+    updatedAtMs: now,
+  });
+}
+
 export function subscribeToAvatarItems(
   callback: (items: AvatarItem[]) => void
 ): Unsubscribe {
@@ -1718,6 +1737,9 @@ export async function updateAvatarItem(
 }
 
 export async function deleteAvatarItem(itemId: string): Promise<void> {
+  if (itemId === HEADLESS_HEAD_ITEM_ID) {
+    throw new Error('Cannot delete the seeded Headless Head catalog item');
+  }
   await deleteDoc(doc(db, AVATAR_ITEMS_COLLECTION, itemId));
 }
 

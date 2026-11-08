@@ -160,6 +160,10 @@ export interface AvatarItem {
   emoteAnimation?: string; // Rig clip id, e.g. 'wave' (MIE-18)
   source?: AvatarItemSource; // system | creator | ugc
   ugcPrompt?: string; // Player's Gemini prompt — moderation log (MIE-18)
+  /** When true on a head-slot item, the rig hides the skin head sphere (MIE-47). */
+  hidesHead?: boolean;
+  /** When true (or when hidesHead), suppress the face overlay while equipped (MIE-47). */
+  hidesFace?: boolean;
   createdAtMs: number;
   updatedAtMs: number;
 }
