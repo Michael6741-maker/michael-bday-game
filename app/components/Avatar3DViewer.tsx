@@ -24,6 +24,11 @@ interface Avatar3DViewerProps {
   className?: string;
   /** Allow drag/touch orbit — home menu + avatar shop (MIE-18 point #13). */
   enableRotation?: boolean;
+  /**
+   * `menu` is the compact preview. `fill` stretches to the parent so Studio's
+   * preview is not stuck at the menu thumbnail size (MIE-44).
+   */
+  size?: 'menu' | 'fill';
   /** Live UGC/studio draft texture applied to a body slot during preview (MIE-18 / MIE-37). */
   draftTexture?: { partType: AvatarPartType; textureUrl: string } | null;
 }
@@ -400,17 +405,22 @@ export default function Avatar3DViewer({
   emoteActive = false,
   className = '',
   enableRotation = true,
+  size = 'menu',
   draftTexture = null,
 }: Avatar3DViewerProps) {
+  const sizeClass =
+    size === 'fill' ? 'w-full min-w-0 h-72 sm:h-80' : 'w-40 h-64 sm:w-48 sm:h-72';
+
+  // touch-none: a drag orbits the rig instead of scrolling the menu (MIE-44).
   return (
-    <div className={`relative w-40 h-64 sm:w-48 sm:h-72 ${className}`}>
+    <div className={`relative ${sizeClass} touch-none ${className}`}>
       <AvatarViewerErrorBoundary>
         <Canvas
           // Three-quarter start so depth is visible before the player drags.
           camera={{ position: [1.05, 1.12, 2.65], fov: 40 }}
           shadows
           gl={{ antialias: true, alpha: true }}
-          style={{ background: 'transparent' }}
+          style={{ background: 'transparent', touchAction: 'none' }}
         >
           <AvatarScene
             layers={layers}

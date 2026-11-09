@@ -12,8 +12,8 @@ import {
 } from '../lib/firestore';
 import { User, AvatarItem, GameEvent } from '../lib/types';
 import { getAvatarUrl } from '../lib/avatars';
-import { mergeAvatarCatalog, getEquippedAvatarItems, DEFAULT_SKIN_COLOR } from '../lib/avatarItems';
-import Avatar3DViewer from '../components/Avatar3DViewer';
+import { mergeAvatarCatalog } from '../lib/avatarItems';
+import AvatarMenuPreview from '../components/AvatarMenuPreview';
 import { getCurrentSeasonConfig, getCurrentSeasonId, getDaysRemaining } from '../lib/seasons';
 import { formatPrice } from '../lib/ballTypes';
 import { isFossilEventActive } from '../lib/gameEvents';
@@ -60,13 +60,18 @@ export default function Home() {
       }
     });
 
-    // Migrate legacy users to starter avatar items (MIE-12)
-    ensureUserAvatarMigration(user.username).then((migrated) => {
-      if (!cancelled) {
-        setCurrentUser(migrated);
-        persistCurrentUser(migrated);
-      }
-    });
+    // Migrate legacy users to starter avatar items (MIE-12).
+    // A failed profile refresh must not blank the menu — keep the local user (MIE-44).
+    ensureUserAvatarMigration(user.username)
+      .then((migrated) => {
+        if (!cancelled) {
+          setCurrentUser(migrated);
+          persistCurrentUser(migrated);
+        }
+      })
+      .catch((err) => {
+        console.warn('[platform-drop] could not refresh avatar profile', err);
+      });
 
     const unsubAvatars = subscribeToAvatarItems((items) => {
       if (!cancelled) setAvatarCatalog(mergeAvatarCatalog(items));
@@ -95,8 +100,6 @@ export default function Home() {
     router.push('/login');
   };
 
-  const handleOpenAvatars = () => router.push('/avatars');
-
   // Check if player can start game (must be logged in and have avatar selected)
   const canStartGame = currentUser !== null && selectedAvatarId !== null;
 
@@ -119,10 +122,6 @@ export default function Home() {
   const handleViewLeaderboard = () => {
     router.push('/leaderboard');
   };
-
-  const equippedLayers = currentUser
-    ? getEquippedAvatarItems(currentUser, avatarCatalog)
-    : {};
 
   if (isLoading) {
     return null; // Prevent flash of empty state
@@ -151,24 +150,8 @@ export default function Home() {
             <label className="block text-sm font-medium text-gray-700 mb-2 sm:mb-3 w-full text-center md:text-left">
               Your Avatar
             </label>
-            {/* The 3D canvas must not live inside this button. A wrapping <button>
-                turned drag-to-rotate into a navigation click, so the rig stayed
-                locked to its front face and read as a flat picture (MIE-43). */}
-            <div className="rounded-2xl p-3 bg-purple-50 ring-2 ring-purple-200 w-full flex flex-col items-center">
-              <Avatar3DViewer
-                layers={equippedLayers}
-                skinColor={currentUser?.skinColor ?? DEFAULT_SKIN_COLOR}
-                enableRotation
-              />
-              <button
-                type="button"
-                onClick={handleOpenAvatars}
-                className="text-xs text-purple-700 font-medium mt-2 hover:underline min-h-[44px] px-3"
-                aria-label="Open avatar shop"
-              >
-                Customize Avatar →
-              </button>
-            </div>
+            {/* 3D preview + Studio links stay outside any button (MIE-43 / MIE-44). */}
+            <AvatarMenuPreview user={currentUser} catalog={avatarCatalog} />
             {currentUser && (
               <div className="mt-3 flex items-center gap-2 text-xs text-gray-500">
                 <span>Leaderboard:</span>

@@ -2,8 +2,16 @@
 
 import type { AvatarItem, AvatarPartType, EquippedAvatar, User } from './types';
 
-/** Usernames allowed to create/edit avatar catalog items (Michael's spec). */
+/** Usernames allowed to create/edit avatar catalog items in the admin panel (Michael's spec). */
 export const AVATAR_CREATOR_USERNAMES = ['HWI', 'NES', 'NYX', 'JDF', 'MIE'] as const;
+
+/**
+ * Player-facing avatar routes (MIE-44).
+ * Opening Studio is for every signed-in player. `AVATAR_CREATOR_USERNAMES` only
+ * gates the admin catalog tabs — it must not hide these links.
+ */
+export const AVATAR_SHOP_HREF = '/avatars';
+export const AVATAR_STUDIO_HREF = '/avatar-studio';
 
 export const AVATAR_PART_TYPES: AvatarPartType[] = [
   'shirt',
@@ -65,6 +73,17 @@ export function isLoadableAvatarTextureUrl(url: string | null | undefined): bool
   const isRemote = url.startsWith('http://') || url.startsWith('https://');
   if (isRemote && /\.svg(\?|#|$)/i.test(url)) return false;
   return true;
+}
+
+/**
+ * Local SVG face overlays are allowed as URLs, but TextureLoader still crashes
+ * some browsers when it uploads them as WebGL textures (MIE-40 / MIE-44).
+ * The 3D viewer rasterizes these onto a canvas first.
+ */
+export function isSvgAvatarTextureUrl(url: string | null | undefined): boolean {
+  if (!url) return false;
+  if (url.startsWith('data:image/svg')) return true;
+  return /\.svg(\?|#|$)/i.test(url);
 }
 
 /** How long an emote animation plays (MIE-17). */
