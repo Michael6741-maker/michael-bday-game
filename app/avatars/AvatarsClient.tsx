@@ -22,6 +22,8 @@ import {
   AVATAR_PART_LABELS,
   DEFAULT_SKIN_COLOR,
   getEquippedAvatarItems,
+  normalizeUserAvatarFields,
+  AVATAR_STUDIO_HREF,
   isAvatarItemOwned,
   canPurchaseAvatarItem,
   isAvatarItemOffsaleForPlayer,
@@ -65,13 +67,22 @@ export default function AvatarsClient() {
       /* Non-blocking — shop still works if seed fails offline */
     });
 
+    // Show the signed-in player immediately. A failed profile refresh used to
+    // leave this page blank, which hid Avatar Studio (MIE-44).
+    const local = normalizeUserAvatarFields(current);
+    queueMicrotask(() => {
+      setUser(local);
+      setLoading(false);
+    });
+
     ensureUserAvatarMigration(current.username)
       .then((migrated) => {
         setUser(migrated);
         setCurrentUser(migrated);
-        setLoading(false);
       })
-      .catch(() => setLoading(false));
+      .catch((err) => {
+        console.warn('[avatars] could not refresh avatar profile', err);
+      });
 
     const unsub = subscribeToAvatarItems(setFirestoreItems);
     getVerifiedUsernames().then(setVerifiedCreators);
@@ -209,7 +220,7 @@ export default function AvatarsClient() {
             Design your own shirt, hair, and more with shapes and uploaded images — then publish to the shop.
           </p>
           <Link
-            href="/avatar-studio"
+            href={AVATAR_STUDIO_HREF}
             className="inline-flex min-h-[40px] items-center px-4 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700"
           >
             Open Avatar Studio

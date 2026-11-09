@@ -22,13 +22,18 @@ import {
   flattenLayersToDataUrl,
   type AvatarStudioTool,
 } from '../lib/avatarStudio';
-import { DEFAULT_SKIN_COLOR } from '../lib/avatarItems';
+import { AVATAR_SHOP_HREF, DEFAULT_SKIN_COLOR, getEquippedAvatarItems, mergeAvatarCatalog } from '../lib/avatarItems';
+import Avatar3DViewer from '../components/Avatar3DViewer';
 import AvatarStudioViewport from '../components/AvatarStudioViewport';
 import AvatarStudioToolbar from '../components/AvatarStudioToolbar';
 import MenuBackground from '../components/MenuBackground';
 import TopNav from '../components/TopNav';
 
-/** Avatar Item Studio — manual texture composer replacing Gemini UGC (MIE-37). */
+/**
+ * Avatar Item Studio — manual texture composer replacing Gemini UGC (MIE-37).
+ * Any signed-in player can open this page. Creator usernames only gate admin
+ * catalog tabs, not Studio itself (MIE-44).
+ */
 export default function AvatarStudioPage() {
   return (
     <Suspense
@@ -357,7 +362,7 @@ function AvatarStudioEditor() {
             <p className="text-sm text-white/70">Design textures for your avatar — no AI required</p>
           </div>
           <Link
-            href="/avatars"
+            href={AVATAR_SHOP_HREF}
             className="text-sm bg-white/15 hover:bg-white/25 px-4 py-2 rounded-full transition-colors"
           >
             ← Back to Avatar Shop
@@ -396,18 +401,33 @@ function AvatarStudioEditor() {
           {/* Main editor */}
           <main className="flex-1 min-w-0">
             {!project ? (
-              <div className="bg-slate-900/80 rounded-xl p-8 text-center border border-slate-700">
-                <p className="text-white font-medium mb-2">Open a project to start designing</p>
-                <p className="text-slate-400 mb-4 text-sm">
-                  Shape tools, image import, and move/scale/rotate only work after you create or open a project.
-                </p>
-                <button
-                  type="button"
-                  onClick={handleNewProject}
-                  className="min-h-[44px] px-6 bg-amber-500 text-black font-semibold rounded-lg"
-                >
-                  New project
-                </button>
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                <div className="bg-slate-900/80 rounded-xl p-8 text-center border border-slate-700">
+                  <p className="text-white font-medium mb-2">Open a project to start designing</p>
+                  <p className="text-slate-400 mb-4 text-sm">
+                    Shape tools, image import, and move/scale/rotate only work after you create or open a project.
+                    The character on the right is your 3D avatar — drag to turn it.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={handleNewProject}
+                    className="min-h-[44px] px-6 bg-amber-500 text-black font-semibold rounded-lg"
+                  >
+                    New project
+                  </button>
+                </div>
+                {/* Show the rig immediately so Studio does not look like a flat empty page (MIE-44). */}
+                <div className="bg-slate-900 rounded-xl overflow-hidden border border-slate-700">
+                  <p className="text-xs text-slate-400 px-3 py-2 border-b border-slate-700">
+                    3D avatar — drag to rotate
+                  </p>
+                  <Avatar3DViewer
+                    layers={user ? getEquippedAvatarItems(user, mergeAvatarCatalog([])) : {}}
+                    skinColor={user?.skinColor ?? DEFAULT_SKIN_COLOR}
+                    enableRotation
+                    size="fill"
+                  />
+                </div>
               </div>
             ) : (
               <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">

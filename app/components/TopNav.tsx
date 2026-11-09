@@ -7,6 +7,7 @@ import { getDisplayName } from '../lib/firestore';
 import { formatPrice } from '../lib/ballTypes';
 import { getCurrentSeasonId, getCurrentSeasonConfig } from '../lib/seasons';
 import { getProPassConfig, isProPassActive, isProPassStarted } from '../lib/proPass';
+import { AVATAR_SHOP_HREF, AVATAR_STUDIO_HREF } from '../lib/avatarItems';
 
 interface TopNavProps {
   user: User | null;
@@ -38,7 +39,9 @@ export default function TopNav({
   };
 
   const handleShop = () => router.push('/shop');
-  const handleAvatars = () => router.push('/avatars');
+  const handleAvatars = () => router.push(AVATAR_SHOP_HREF);
+  // Studio is a first-class entry for every signed-in player (MIE-44).
+  const handleAvatarStudio = () => router.push(AVATAR_STUDIO_HREF);
   const handleSeason = () => router.push(`/season/${getCurrentSeasonId()}`);
   const handleSettings = () => router.push('/settings');
   const handleFriends = () => router.push('/friends');
@@ -93,6 +96,15 @@ export default function TopNav({
             >
               <span className="text-lg">👤</span>
               <span className="hidden sm:inline text-sm">Avatars</span>
+            </button>
+          )}
+          {user && (
+            <button
+              onClick={handleAvatarStudio}
+              className={navButtonClass}
+            >
+              <span className="text-lg">🎨</span>
+              <span className="hidden sm:inline text-sm">Studio</span>
             </button>
           )}
           {showSettingsButton && user && (

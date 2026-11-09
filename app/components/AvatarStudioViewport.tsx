@@ -54,7 +54,7 @@ export default function AvatarStudioViewport({
         skinColor={skinColor}
         draftTexture={draftTexture}
         enableRotation
-        className="w-full h-64 sm:h-80"
+        size="fill"
       />
     </div>
   );

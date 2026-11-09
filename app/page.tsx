@@ -3,23 +3,26 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { getCurrentUser, setCurrentUser as persistCurrentUser } from './lib/auth';
-import { getUserData } from './lib/firestore';
-import { User } from './lib/types';
+import { getUserData, subscribeToAvatarItems } from './lib/firestore';
+import { AvatarItem, User } from './lib/types';
+import { mergeAvatarCatalog } from './lib/avatarItems';
 import { GAMES, GameDefinition } from './lib/games';
 import { Card, PageHero } from './components/ui';
 import TopNav from './components/TopNav';
 import MenuBackground from './components/MenuBackground';
+import AvatarMenuPreview from './components/AvatarMenuPreview';
 
 /**
  * Game Picker (root)
  *
  * Landing screen listing every game in the app. Each game owns its own menu
- * route; account-level screens (shop, avatars, friends, leaderboard, settings)
- * stay shared and are reachable from TopNav here.
+ * route. The player's 3D avatar, shop, and Avatar Studio stay on this screen
+ * so nobody has to know a secret URL (MIE-44).
  */
 export default function GamePicker() {
   const router = useRouter();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [avatarCatalog, setAvatarCatalog] = useState<AvatarItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
@@ -40,15 +43,24 @@ export default function GamePicker() {
     });
 
     // ...then refresh from Firestore so currency pills stay in sync across devices.
-    getUserData(user.username).then((fresh) => {
-      if (!cancelled && fresh) {
-        setCurrentUser(fresh);
-        persistCurrentUser(fresh);
-      }
+    getUserData(user.username)
+      .then((fresh) => {
+        if (!cancelled && fresh) {
+          setCurrentUser(fresh);
+          persistCurrentUser(fresh);
+        }
+      })
+      .catch((err) => {
+        console.warn('[game-picker] could not refresh profile', err);
+      });
+
+    const unsubAvatars = subscribeToAvatarItems((items) => {
+      if (!cancelled) setAvatarCatalog(mergeAvatarCatalog(items));
     });
 
     return () => {
       cancelled = true;
+      unsubAvatars();
     };
   }, [router]);
 
@@ -75,6 +87,17 @@ export default function GamePicker() {
           title="Choose Your Game"
           subtitle={currentUser ? `Welcome back, ${currentUser.username}!` : undefined}
         />
+
+        {/* 3D avatar + Studio stay on the first screen after login (MIE-44). */}
+        <div className="bg-white rounded-3xl shadow-glow p-4 sm:p-5 mb-6 flex flex-col sm:flex-row items-center gap-4">
+          <AvatarMenuPreview user={currentUser} catalog={avatarCatalog} />
+          <div className="text-center sm:text-left">
+            <h2 className="text-lg font-extrabold text-gray-800">Your 3D avatar</h2>
+            <p className="text-sm text-gray-600 mt-1">
+              Drag the character to turn them around. Avatar Studio is where you design clothes.
+            </p>
+          </div>
+        </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
           {GAMES.map((game) => {
