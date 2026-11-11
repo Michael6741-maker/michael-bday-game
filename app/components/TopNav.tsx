@@ -69,7 +69,7 @@ export default function TopNav({
 
   return (
     <div className="fixed top-0 left-0 right-0 z-50 p-2 sm:p-3">
-      <div className="animate-drop-in flex justify-between items-center max-w-6xl mx-auto gap-2">
+      <div className="animate-drop-in flex flex-wrap justify-between items-center max-w-6xl mx-auto gap-2">
         {/* Left Side - Season & Shop Buttons */}
         <div className="flex items-center gap-1.5 sm:gap-2">
           {showSeasonButton && seasonConfig && (
