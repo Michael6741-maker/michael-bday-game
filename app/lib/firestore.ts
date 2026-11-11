@@ -24,7 +24,7 @@ import {
   type Unsubscribe
 } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
-import { db, functions } from './firebase';
+import { db, functions, getFirebaseAuth } from './firebase';
 import { Score, User, SeasonData, ProPassData, LoginCredentials, GameEvent, GameEventType, BroadcastMessage, ShopOffer, Poll, PlayerSettings, PendingGift, GiftTransaction, RenameUserResult, LevelDocument, FriendRequest, Friendship, ChatMessage, RaceChallenge, FossilTypeId } from './types';
 import { getCurrentSeasonId, getSeasonConfig } from './seasons';
 import type { SeasonConfig } from './seasons';
@@ -50,6 +50,9 @@ import {
 } from './fossilCraft';
 import { getGamepassById, VIP_BALL_ID, type GamepassId } from './gamepasses';
 import { getBallTypeById, getBallGiftGemPrice, isBallGiftable } from './ballTypes';
+import { hashPassword, passwordMatches } from './password';
+import { getSessionPassword, rememberSessionPassword } from './auth';
+import { requestPasswordSession, requestPlayerRegistration, signInWithSessionToken } from './sessionAuth';
 import {
   createStarterEquippedAvatar,
   HEADLESS_HEAD_CATALOG_FIELDS,
@@ -370,6 +373,14 @@ export async function createUser(
   avatarId: number
 ): Promise<User> {
   try {
+    const remote = await requestPlayerRegistration(credentials.username, credentials.password, avatarId);
+    if (remote) {
+      await signInWithSessionToken(remote.token);
+      rememberSessionPassword(credentials.password);
+      const created = await getUserData(remote.username);
+      if (created) return created;
+    }
+
     const validation = validateDisplayName(credentials.username);
     if (!validation.ok) {
       throw new Error(validation.error);
@@ -390,7 +401,7 @@ export async function createUser(
       username,
       displayName: username,
       usernameLower: lower,
-      password: credentials.password,
+      password: await hashPassword(credentials.password),
       totalMeters: 0,
       totalCoins: 0,
       totalGems: 0,
@@ -406,8 +417,9 @@ export async function createUser(
     };
 
     await setDoc(userRef(username), newUser);
+    rememberSessionPassword(credentials.password);
     console.log('User created successfully:', username);
-    return newUser;
+    return normalizeUserAvatarFields(newUser);
   } catch (error) {
     console.error('Error creating user:', error);
     throw error;
@@ -419,6 +431,15 @@ export async function createUser(
  */
 export async function loginUser(credentials: LoginCredentials): Promise<User> {
   try {
+    const remote = await requestPasswordSession(credentials.username, credentials.password);
+    if (remote) {
+      await signInWithSessionToken(remote.token);
+      rememberSessionPassword(credentials.password);
+      const fresh = await getUserData(remote.username);
+      if (!fresh) throw new Error('User not found');
+      return fresh;
+    }
+
     const docId = await resolveUserDocId(credentials.username);
     if (!docId) {
       throw new Error('User not found');
@@ -431,9 +452,10 @@ export async function loginUser(credentials: LoginCredentials): Promise<User> {
 
     let userData = userDoc.data() as User;
 
-    if (userData.password !== credentials.password) {
+    if (!(await passwordMatches(userData.password, credentials.password))) {
       throw new Error('Incorrect password');
     }
+    rememberSessionPassword(credentials.password);
 
     // Backfill MIE-23 fields for legacy rows on login.
     const patches: Partial<User> = {};
@@ -1666,12 +1688,20 @@ export async function ensureHeadlessHeadCatalogItem(): Promise<void> {
   if (snap.exists()) return;
 
   const now = Date.now();
-  await setDoc(ref, {
-    id: HEADLESS_HEAD_ITEM_ID,
-    ...HEADLESS_HEAD_CATALOG_FIELDS,
-    createdAtMs: now,
-    updatedAtMs: now,
-  });
+  try {
+    await setDoc(ref, {
+      id: HEADLESS_HEAD_ITEM_ID,
+      ...HEADLESS_HEAD_CATALOG_FIELDS,
+      createdAtMs: now,
+      updatedAtMs: now,
+    });
+  } catch (error) {
+    const code = typeof error === 'object' && error && 'code' in error
+      ? String((error as { code?: string }).code)
+      : '';
+    if (code === 'permission-denied') return;
+    throw error;
+  }
 }
 
 export function subscribeToAvatarItems(
@@ -1854,8 +1884,13 @@ export async function unequipAvatarSlot(
 // ============================================
 
 /** Credentials bundle for secure avatar Cloud Functions (custom auth). */
+function hasSecureCaller(): boolean {
+  return Boolean(getSessionPassword() || getFirebaseAuth().currentUser);
+}
+
 function avatarAuth(user: User): { username: string; password: string } {
-  return { username: user.username, password: user.password };
+  if (!hasSecureCaller()) throw new Error('Log in again to continue');
+  return { username: user.username, password: getSessionPassword() };
 }
 
 /** Persist free skin tint on the user doc (MIE-18 points #9, #14). */
@@ -2170,7 +2205,8 @@ export async function giftShopItem(
 
 /** Credentials bundle for secure level Cloud Functions (custom auth). */
 function levelAuth(user: User): { username: string; password: string } {
-  return { username: user.username, password: user.password };
+  if (!hasSecureCaller()) throw new Error('Log in again to continue');
+  return { username: user.username, password: getSessionPassword() };
 }
 
 /** Create a new level via Cloud Function — author-only write. */
@@ -2209,7 +2245,7 @@ export async function getPublicLevelDocument(levelId: string): Promise<LevelDocu
 
 /** Load any level for play — uses CF for private levels. */
 export async function getLevelDocument(levelId: string, user?: User | null): Promise<LevelDocument | null> {
-  if (user) {
+  if (user && hasSecureCaller()) {
     try {
       const fn = httpsCallable<
         { levelId: string; username: string; password: string },
@@ -2218,7 +2254,7 @@ export async function getLevelDocument(levelId: string, user?: User | null): Pro
       const result = await fn({ levelId, ...levelAuth(user) });
       return normalizeLevelDocument(result.data.id, result.data as unknown as Record<string, unknown>);
     } catch {
-      return null;
+      // Public levels stay playable when the private lookup is refused.
     }
   }
   return getPublicLevelDocument(levelId);

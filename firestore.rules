@@ -31,41 +31,83 @@ service cloud.firestore {
       allow write: if false;
     }
     
-    match /users/{username} {
-      allow read: if true;
-      allow create: if true;
-      allow update: if true;
-      allow delete: if false;
+    function signedIn() {
+      return request.auth != null;
     }
 
+    function isAdmin() {
+      return signedIn() && request.auth.token.admin == true;
+    }
+
+    function isOwner(userId) {
+      return signedIn() && request.auth.uid == userId;
+    }
+
+    function keepsAdminFlag() {
+      return isAdmin()
+        || request.resource.data.get('isAdmin', false) == resource.data.get('isAdmin', false);
+    }
+
+    function noPasswordField() {
+      return !('password' in request.resource.data);
+    }
+
+    // Profiles are readable by a signed-in player. Password hashes are not on
+    // this document. Only the owner (or an admin) can change a profile, and
+    // nobody can grant themselves admin from the client.
+    match /users/{username} {
+      allow read: if signedIn();
+      allow create: if isOwner(username)
+        && noPasswordField()
+        && request.resource.data.get('isAdmin', false) == false
+        && request.resource.data.get('totalCoins', 0) == 0
+        && request.resource.data.get('totalGems', 0) == 0;
+      allow update: if (isOwner(username) || isAdmin())
+        && noPasswordField()
+        && keepsAdminFlag();
+      allow delete: if false;
+
+      match /private/{docId} {
+        allow read, write: if false;
+      }
+    }
+
+    // Public game content stays readable. Only an admin can publish or edit it.
     match /events/{eventId} {
       allow read: if true;
-      allow write: if true;
+      allow write: if isAdmin();
     }
 
     match /messages/{messageId} {
       allow read: if true;
-      allow write: if true;
+      allow write: if isAdmin();
     }
 
     match /shopOffers/{offerId} {
       allow read: if true;
-      allow write: if true;
+      allow write: if isAdmin();
     }
 
     match /polls/{pollId} {
-      allow read: if true;
-      allow write: if true;
+      allow read: if signedIn();
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin()
+        || (signedIn() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['counts']));
 
       match /answers/{username} {
-        allow read: if true;
-        allow write: if true;
+        allow read: if signedIn();
+        allow create, update: if isOwner(username);
+        allow delete: if isAdmin();
       }
     }
 
     match /avatarItems/{itemId} {
       allow read: if true;
-      allow write: if true;
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin()
+        || (signedIn()
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stock', 'updatedAtMs'])
+          && request.resource.data.stock == resource.data.stock - 1);
     }
 
     // Avatar Item Studio drafts — owner read/write enforced via Cloud Functions (MIE-37).
@@ -74,27 +116,64 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    // Shop gift audit log — clients write via giftShopItem transaction (MIE-21).
-    match /giftTransactions/{giftId} {
-      allow read: if true;
-      allow write: if true;
+    function isGiftParty() {
+      return signedIn() && (
+        resource.data.fromUsername == request.auth.uid
+        || resource.data.toUsername == request.auth.uid
+      );
     }
 
-    // Friends & social (MIE-20)
+    // Gift rows are visible to the people in the gift, and only the sender can write one.
+    match /giftTransactions/{giftId} {
+      allow read: if isGiftParty();
+      allow create: if signedIn() && request.resource.data.fromUsername == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    // Friends, races, and chats require the signed-in player to be a participant.
     match /friendRequests/{requestId} {
-      allow read, write: if true;
+      allow read: if signedIn() && (
+        resource.data.fromUsername == request.auth.uid
+        || resource.data.toUsername == request.auth.uid
+      );
+      allow create: if signedIn() && request.resource.data.fromUsername == request.auth.uid;
+      allow update: if signedIn() && (
+        resource.data.fromUsername == request.auth.uid
+        || resource.data.toUsername == request.auth.uid
+      );
+      allow delete: if false;
     }
 
     match /friendships/{pairId} {
-      allow read, write: if true;
+      allow read: if signedIn() && resource.data.usernames.hasAny([request.auth.uid]);
+      allow create: if signedIn() && request.resource.data.usernames.hasAny([request.auth.uid]);
+      allow update, delete: if signedIn() && resource.data.usernames.hasAny([request.auth.uid]);
     }
 
     match /raceChallenges/{challengeId} {
-      allow read, write: if true;
+      allow read: if signedIn() && (
+        resource.data.challenger == request.auth.uid
+        || resource.data.opponent == request.auth.uid
+      );
+      allow create: if signedIn() && request.resource.data.challenger == request.auth.uid;
+      allow update: if signedIn() && (
+        resource.data.challenger == request.auth.uid
+        || resource.data.opponent == request.auth.uid
+      );
+      allow delete: if false;
     }
 
-    match /chats/{pairId}/messages/{messageId} {
-      allow read, write: if true;
+    match /chats/{pairId} {
+      allow read, create: if signedIn() && pairId.split('__').hasAny([request.auth.uid]);
+      allow update, delete: if false;
+
+      match /messages/{messageId} {
+        allow read: if signedIn() && pairId.split('__').hasAny([request.auth.uid]);
+        allow create: if signedIn()
+          && pairId.split('__').hasAny([request.auth.uid])
+          && request.resource.data.fromUsername == request.auth.uid;
+        allow update, delete: if false;
+      }
     }
   }
 }

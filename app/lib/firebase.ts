@@ -1,6 +1,7 @@
 // Firebase configuration and initialization
 import { initializeApp, getApps, FirebaseApp } from 'firebase/app';
 import { connectFirestoreEmulator, getFirestore, Firestore } from 'firebase/firestore';
+import { getAuth, Auth } from 'firebase/auth';
 import { getFunctions, Functions } from 'firebase/functions';
 
 // Client Firebase config is injected at build time via NEXT_PUBLIC_* env vars.
@@ -40,3 +41,17 @@ if (firestoreEmulatorHost && !globalThis.__PLATFORM_DROP_FIRESTORE_EMULATOR_CONN
 
 // Initialize Firebase Functions
 export const functions: Functions = getFunctions(app);
+
+// Auth is created on first use. Calling getAuth() at import time rejects an
+// empty API key and breaks `next build` before CI injects NEXT_PUBLIC_FIREBASE_*.
+let authInstance: Auth | undefined;
+
+export function getFirebaseAuth(): Auth {
+  if (!authInstance) authInstance = getAuth(app);
+  return authInstance;
+}
+
+/** Resolve once the persisted Firebase Auth user (if any) has been loaded. */
+export function waitForAuth(): Promise<void> {
+  return getFirebaseAuth().authStateReady();
+}
