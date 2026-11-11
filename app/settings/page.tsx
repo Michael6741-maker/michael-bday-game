@@ -148,6 +148,10 @@ export default function SettingsPage() {
     setIsRenaming(true);
     try {
       const result = await renameUserViaFunction(user.username, renamePassword, validation.formatted);
+      if (result.token) {
+        const { signInWithSessionToken } = await import('../lib/sessionAuth');
+        await signInWithSessionToken(result.token);
+      }
       const refreshed = { ...user, username: result.username, displayName: result.displayName, legacyRenameUsed: true, isLegacyInitials: false, lastRenameAtMs: Date.now() };
       setUser(refreshed);
       setCurrentUser(refreshed);

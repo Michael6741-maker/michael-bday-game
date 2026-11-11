@@ -5,6 +5,7 @@ import { User } from '../lib/types';
 import { logout } from '../lib/auth';
 import { getDisplayName } from '../lib/firestore';
 import { formatPrice } from '../lib/ballTypes';
+import { formatGems } from '../lib/gamepasses';
 import { getCurrentSeasonId, getCurrentSeasonConfig } from '../lib/seasons';
 import { getProPassConfig, isProPassActive, isProPassStarted } from '../lib/proPass';
 import { AVATAR_SHOP_HREF, AVATAR_STUDIO_HREF } from '../lib/avatarItems';
@@ -68,7 +69,7 @@ export default function TopNav({
 
   return (
     <div className="fixed top-0 left-0 right-0 z-50 p-2 sm:p-3">
-      <div className="animate-drop-in flex justify-between items-center max-w-6xl mx-auto gap-2">
+      <div className="animate-drop-in flex flex-wrap justify-between items-center max-w-6xl mx-auto gap-2">
         {/* Left Side - Season & Shop Buttons */}
         <div className="flex items-center gap-1.5 sm:gap-2">
           {showSeasonButton && seasonConfig && (
@@ -173,6 +174,11 @@ export default function TopNav({
                 <div className="flex items-center gap-1">
                   <span className="text-base sm:text-lg">🪙</span>
                   <span className="font-medium">{formatPrice(user.totalCoins)}</span>
+                </div>
+                <div className={`w-px h-4 ${transparent ? 'bg-white/30' : 'bg-gray-300'} hidden sm:block`} />
+                <div className="flex items-center gap-1">
+                  <span className="text-base sm:text-lg">💎</span>
+                  <span className="font-medium">{formatGems(user.totalGems ?? 0)}</span>
                 </div>
                 <div className={`w-px h-4 ${transparent ? 'bg-white/30' : 'bg-gray-300'} hidden sm:block`} />
                 <div className="flex items-center gap-1">

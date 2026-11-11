@@ -23,7 +23,50 @@ const USERS_COLLECTION = 'users';
 const MAX_METERS_PER_SECOND = 30; // Maximum plausible score rate
 const MIN_GAME_DURATION_MS = 300; // Minimum game duration (0.3 seconds)
 const SESSION_EXPIRY_MS = 60 * 60 * 1000; // Sessions expire after 1 hour
-const SECRET_KEY = process.env.FUNCTIONS_SECRET_KEY || 'platform-drop-secret-key-2024';
+
+/** Anti-cheat key. There is no baked-in fallback — unset means sessions stay off. */
+function requireSecretKey(): string {
+  const key = process.env.FUNCTIONS_SECRET_KEY;
+  if (!key) {
+    throw new functions.https.HttpsError('failed-precondition', 'Game sessions are unavailable');
+  }
+  return key;
+}
+
+function hashPassword(password: string): string {
+  return `sha256:${crypto.createHash('sha256').update(password, 'utf8').digest('hex')}`;
+}
+
+function passwordMatches(stored: unknown, provided: string): boolean {
+  if (typeof stored !== 'string' || !provided) return false;
+  if (stored.startsWith('sha256:')) return stored === hashPassword(provided);
+  return stored === provided;
+}
+
+function credentialsRef(docId: string) {
+  return db.collection(USERS_COLLECTION).doc(docId).collection('private').doc('credentials');
+}
+
+async function readStoredPassword(docId: string, userData?: Record<string, unknown>): Promise<string | undefined> {
+  const priv = await credentialsRef(docId).get();
+  const hashed = priv.data()?.passwordHash;
+  if (typeof hashed === 'string' && hashed) return hashed;
+  const legacy = userData?.password;
+  return typeof legacy === 'string' ? legacy : undefined;
+}
+
+/** Move a verified password off the public profile and keep only the hash. */
+async function storePasswordHash(docId: string, password: string, stored?: string): Promise<void> {
+  const passwordHash = stored && stored.startsWith('sha256:') ? stored : hashPassword(password);
+  await credentialsRef(docId).set({ passwordHash });
+  await db.collection(USERS_COLLECTION).doc(docId).update({
+    password: admin.firestore.FieldValue.delete(),
+  });
+}
+
+async function issueSessionToken(docId: string, isAdminUser: boolean): Promise<string> {
+  return admin.auth().createCustomToken(docId, { admin: isAdminUser });
+}
 const DISPLAY_NAME_MAX_LENGTH = 10;
 const RENAME_COOLDOWN_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -89,7 +132,7 @@ async function resolveUserDocId(input: string): Promise<string | null> {
  * Generate a secure token for session validation
  */
 function generateToken(sessionId: string, timestamp: number): string {
-  const data = `${sessionId}:${timestamp}:${SECRET_KEY}`;
+  const data = `${sessionId}:${timestamp}:${requireSecretKey()}`;
   return crypto.createHash('sha256').update(data).digest('hex');
 }
 
@@ -144,6 +187,7 @@ export const startGameSession = functions.https.onCall(async (data, context) => 
       timestamp,
     };
   } catch (error) {
+    if (error instanceof functions.https.HttpsError) throw error;
     console.error('Error starting game session:', error);
     throw new functions.https.HttpsError('internal', 'Failed to start game session');
   }
@@ -308,7 +352,7 @@ export const submitScore = functions.https.onCall(async (data, context) => {
 // ============================================
 // CLOUD FUNCTION: renameUser (MIE-23)
 // ============================================
-export const renameUser = functions.https.onCall(async (data) => {
+export const renameUser = functions.https.onCall(async (data, context) => {
   const { oldUsername, password, newName } = data ?? {};
   if (!oldUsername || !password || !newName) {
     throw new functions.https.HttpsError('invalid-argument', 'Missing oldUsername, password, or newName');
@@ -346,7 +390,8 @@ export const renameUser = functions.https.onCall(async (data) => {
     throw new functions.https.HttpsError('not-found', 'User not found');
   }
   const userData = oldSnap.data() as Record<string, unknown>;
-  if (userData.password !== password) {
+  const storedPassword = await readStoredPassword(oldDocId, userData);
+  if (!passwordMatches(storedPassword, String(password))) {
     throw new functions.https.HttpsError('permission-denied', 'Incorrect password');
   }
 
@@ -358,7 +403,7 @@ export const renameUser = functions.https.onCall(async (data) => {
   }
 
   const now = Date.now();
-  const newUser = {
+  const newUser: Record<string, unknown> = {
     ...userData,
     username: formatted,
     displayName: formatted,
@@ -367,6 +412,7 @@ export const renameUser = functions.https.onCall(async (data) => {
     legacyRenameUsed: isLegacyMigration ? true : userData.legacyRenameUsed ?? false,
     isLegacyInitials: false,
   };
+  delete newUser.password;
 
   const batch = db.batch();
   batch.set(db.collection(USERS_COLLECTION).doc(formatted), newUser);
@@ -382,14 +428,88 @@ export const renameUser = functions.https.onCall(async (data) => {
     batch.delete(oldLb);
   }
 
+  const passwordHash = storedPassword && storedPassword.startsWith('sha256:')
+    ? storedPassword
+    : hashPassword(String(password));
+  batch.set(credentialsRef(formatted), { passwordHash });
+  batch.delete(credentialsRef(oldDocId));
+
   await batch.commit();
 
+  const token = await issueSessionToken(formatted, userData.isAdmin === true);
   return {
     success: true,
     username: formatted,
     displayName: formatted,
     message: 'Name updated',
+    token,
   };
+});
+
+/**
+ * Verify a password and return a Firebase custom token.
+ * The hash lives under users/{id}/private/credentials, not on the profile.
+ */
+export const startPasswordSession = functions.https.onCall(async (data) => {
+  const username = typeof data?.username === 'string' ? data.username : '';
+  const password = typeof data?.password === 'string' ? data.password : '';
+  if (!username || !password) {
+    throw new functions.https.HttpsError('invalid-argument', 'Missing username or password');
+  }
+  const docId = await resolveUserDocId(username);
+  if (!docId) throw new functions.https.HttpsError('not-found', 'User not found');
+  const snap = await db.collection(USERS_COLLECTION).doc(docId).get();
+  if (!snap.exists) throw new functions.https.HttpsError('not-found', 'User not found');
+  const userData = snap.data() as Record<string, unknown>;
+  const stored = await readStoredPassword(docId, userData);
+  if (!passwordMatches(stored, password)) {
+    throw new functions.https.HttpsError('permission-denied', 'Incorrect password');
+  }
+  await storePasswordHash(docId, password, stored);
+  const token = await issueSessionToken(docId, userData.isAdmin === true);
+  return { token, username: docId };
+});
+
+/** Create an account with a hashed password and return a custom token. */
+export const registerPlayer = functions.https.onCall(async (data) => {
+  const rawName = typeof data?.username === 'string' ? data.username : '';
+  const password = typeof data?.password === 'string' ? data.password : '';
+  const avatarId = Number(data?.avatarId);
+  if (!rawName || !password) {
+    throw new functions.https.HttpsError('invalid-argument', 'Missing username or password');
+  }
+  if (!validateDisplayNameFormat(rawName) || isProfaneDisplayName(formatDisplayName(rawName))) {
+    throw new functions.https.HttpsError('invalid-argument', 'Name not usable');
+  }
+  if (!Number.isInteger(avatarId) || avatarId < 1 || avatarId > 10) {
+    throw new functions.https.HttpsError('invalid-argument', 'Invalid avatar');
+  }
+  const username = formatDisplayName(rawName);
+  const lower = usernameLowerKey(username);
+  const taken = await db.collection(USERS_COLLECTION).where('usernameLower', '==', lower).limit(1).get();
+  if (!taken.empty) throw new functions.https.HttpsError('already-exists', 'Name already taken');
+  const existing = await db.collection(USERS_COLLECTION).doc(username).get();
+  if (existing.exists) throw new functions.https.HttpsError('already-exists', 'Name already taken');
+
+  const passwordHash = hashPassword(password);
+  await db.collection(USERS_COLLECTION).doc(username).set({
+    username,
+    displayName: username,
+    usernameLower: lower,
+    totalMeters: 0,
+    totalCoins: 0,
+    totalGems: 0,
+    ownedBalls: ['default'],
+    selectedBall: 'default',
+    avatarId,
+    createdAt: new Date().toISOString(),
+    extraBalls: 0,
+    seasonData: null,
+    skinColor: '#FFFFFF',
+  });
+  await credentialsRef(username).set({ passwordHash });
+  const token = await issueSessionToken(username, false);
+  return { token, username };
 });
 
 // ============================================
@@ -405,7 +525,26 @@ const MAX_LEVEL_SPIKES = 50; // MIE-30 Studio spike traps
 
 type LevelScrollDir = 'up' | 'down' | 'left' | 'right';
 
-async function verifyUserCredentials(username: string, password: string): Promise<string> {
+async function verifyUserCredentials(
+  username: string,
+  password: string,
+  context?: functions.https.CallableContext,
+): Promise<string> {
+  if (context?.auth?.uid) {
+    const uid = context.auth.uid;
+    const snap = await db.collection(USERS_COLLECTION).doc(uid).get();
+    if (!snap.exists) {
+      throw new functions.https.HttpsError('permission-denied', 'User not found');
+    }
+    if (username) {
+      const requested = await resolveUserDocId(String(username));
+      if (requested && requested !== uid) {
+        throw new functions.https.HttpsError('permission-denied', 'User mismatch');
+      }
+    }
+    return uid;
+  }
+
   const docId = await resolveUserDocId(String(username));
   if (!docId) {
     throw new functions.https.HttpsError('not-found', 'User not found');
@@ -415,7 +554,8 @@ async function verifyUserCredentials(username: string, password: string): Promis
     throw new functions.https.HttpsError('not-found', 'User not found');
   }
   const data = snap.data() as Record<string, unknown>;
-  if (data.password !== password) {
+  const stored = await readStoredPassword(docId, data);
+  if (!passwordMatches(stored, password)) {
     throw new functions.https.HttpsError('permission-denied', 'Incorrect password');
   }
   return docId;
@@ -519,12 +659,12 @@ function sanitizeLevelPayload(raw: Record<string, unknown>, authorUsername: stri
 }
 
 /** Create a blank level owned by the authenticated author. */
-export const createLevel = functions.https.onCall(async (data) => {
+export const createLevel = functions.https.onCall(async (data, context) => {
   const { username, password } = data ?? {};
-  if (!username || !password) {
+  if (!username || (!password && !context?.auth?.uid)) {
     throw new functions.https.HttpsError('invalid-argument', 'Missing username or password');
   }
-  const authorUsername = await verifyUserCredentials(username, password);
+  const authorUsername = await verifyUserCredentials(username, password, context);
   const now = Date.now();
   const ref = db.collection(LEVELS_COLLECTION).doc();
   const level = {
@@ -548,12 +688,12 @@ export const createLevel = functions.https.onCall(async (data) => {
 });
 
 /** Update an existing level — author-only. */
-export const updateLevel = functions.https.onCall(async (data) => {
+export const updateLevel = functions.https.onCall(async (data, context) => {
   const { username, password, levelId, level } = data ?? {};
-  if (!username || !password || !levelId || !level) {
+  if (!username || (!password && !context?.auth?.uid) || !levelId || !level) {
     throw new functions.https.HttpsError('invalid-argument', 'Missing username, password, levelId, or level');
   }
-  const authorUsername = await verifyUserCredentials(username, password);
+  const authorUsername = await verifyUserCredentials(username, password, context);
   const ref = db.collection(LEVELS_COLLECTION).doc(String(levelId));
   const snap = await ref.get();
   if (!snap.exists) {
@@ -572,12 +712,12 @@ export const updateLevel = functions.https.onCall(async (data) => {
 });
 
 /** Archive (soft-delete) a level — author-only. */
-export const archiveLevel = functions.https.onCall(async (data) => {
+export const archiveLevel = functions.https.onCall(async (data, context) => {
   const { username, password, levelId } = data ?? {};
-  if (!username || !password || !levelId) {
+  if (!username || (!password && !context?.auth?.uid) || !levelId) {
     throw new functions.https.HttpsError('invalid-argument', 'Missing username, password, or levelId');
   }
-  const authorUsername = await verifyUserCredentials(username, password);
+  const authorUsername = await verifyUserCredentials(username, password, context);
   const ref = db.collection(LEVELS_COLLECTION).doc(String(levelId));
   const snap = await ref.get();
   if (!snap.exists) {
@@ -592,12 +732,12 @@ export const archiveLevel = functions.https.onCall(async (data) => {
 });
 
 /** List author's non-archived levels including private drafts. */
-export const getMyLevelsSecure = functions.https.onCall(async (data) => {
+export const getMyLevelsSecure = functions.https.onCall(async (data, context) => {
   const { username, password } = data ?? {};
-  if (!username || !password) {
+  if (!username || (!password && !context?.auth?.uid)) {
     throw new functions.https.HttpsError('invalid-argument', 'Missing username or password');
   }
-  const authorUsername = await verifyUserCredentials(username, password);
+  const authorUsername = await verifyUserCredentials(username, password, context);
   const snap = await db.collection(LEVELS_COLLECTION)
     .where('authorUsername', '==', authorUsername)
     .orderBy('updatedAtMs', 'desc')
@@ -609,7 +749,7 @@ export const getMyLevelsSecure = functions.https.onCall(async (data) => {
 });
 
 /** Load a level for play — public to anyone; private only for author. */
-export const getLevelForPlay = functions.https.onCall(async (data) => {
+export const getLevelForPlay = functions.https.onCall(async (data, context) => {
   const { levelId, username, password } = data ?? {};
   if (!levelId) {
     throw new functions.https.HttpsError('invalid-argument', 'Missing levelId');
@@ -624,10 +764,10 @@ export const getLevelForPlay = functions.https.onCall(async (data) => {
     throw new functions.https.HttpsError('not-found', 'Level not found');
   }
   if (level.visibility === 'private') {
-    if (!username || !password) {
+    if (!username || (!password && !context?.auth?.uid)) {
       throw new functions.https.HttpsError('permission-denied', 'Private level — author login required');
     }
-    const authorUsername = await verifyUserCredentials(username, password);
+    const authorUsername = await verifyUserCredentials(username, password, context);
     if (level.authorUsername !== authorUsername) {
       throw new functions.https.HttpsError('permission-denied', 'Private level');
     }
@@ -636,12 +776,12 @@ export const getLevelForPlay = functions.https.onCall(async (data) => {
 });
 
 /** Increment play count for public levels — skips author self-plays. */
-export const incrementLevelPlayCountSecure = functions.https.onCall(async (data) => {
+export const incrementLevelPlayCountSecure = functions.https.onCall(async (data, context) => {
   const { levelId, username, password } = data ?? {};
-  if (!levelId || !username || !password) {
+  if (!levelId || !username || (!password && !context?.auth?.uid)) {
     throw new functions.https.HttpsError('invalid-argument', 'Missing levelId, username, or password');
   }
-  const playerUsername = await verifyUserCredentials(username, password);
+  const playerUsername = await verifyUserCredentials(username, password, context);
   const ref = db.collection(LEVELS_COLLECTION).doc(String(levelId));
   const snap = await ref.get();
   if (!snap.exists) {
@@ -871,9 +1011,9 @@ async function generateTextureImage(partType: string, prompt: string): Promise<{
 }
 
 /** Generate a preview texture via Gemini (server-side) for player UGC (MIE-18). */
-export const generateAvatarTexture = functions.https.onCall(async (data) => {
+export const generateAvatarTexture = functions.https.onCall(async (data, context) => {
   const { username, password, partType, prompt } = data ?? {};
-  if (!username || !password || !partType || !prompt) {
+  if (!username || (!password && !context?.auth?.uid) || !partType || !prompt) {
     throw new functions.https.HttpsError('invalid-argument', 'Missing username, password, partType, or prompt');
   }
   if (!UGC_TEXTURE_PART_TYPES.has(String(partType))) {
@@ -886,7 +1026,7 @@ export const generateAvatarTexture = functions.https.onCall(async (data) => {
     throw new functions.https.HttpsError('invalid-argument', 'Prompt contains blocked words');
   }
 
-  const playerUsername = await verifyUserCredentials(username, password);
+  const playerUsername = await verifyUserCredentials(username, password, context);
   const { buffer, contentType } = await generateTextureImage(String(partType), String(prompt).trim());
   const draftId = `draft-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
   // Always store as PNG/JPEG raster — never SVG (MIE-40)
@@ -911,7 +1051,7 @@ export const generateAvatarTexture = functions.https.onCall(async (data) => {
 });
 
 /** Publish a Gemini draft instantly to the Avatar shop (MIE-18 point #10). */
-export const publishAvatarUgcItem = functions.https.onCall(async (data) => {
+export const publishAvatarUgcItem = functions.https.onCall(async (data, context) => {
   const {
     username,
     password,
@@ -924,7 +1064,7 @@ export const publishAvatarUgcItem = functions.https.onCall(async (data) => {
     ugcPrompt,
   } = data ?? {};
 
-  if (!username || !password || !draftId || !name || !partType || !textureUrl) {
+  if (!username || (!password && !context?.auth?.uid) || !draftId || !name || !partType || !textureUrl) {
     throw new functions.https.HttpsError('invalid-argument', 'Missing required publish fields');
   }
   if (isProfaneText(String(name)) || (ugcPrompt && isProfaneText(String(ugcPrompt)))) {
@@ -933,7 +1073,7 @@ export const publishAvatarUgcItem = functions.https.onCall(async (data) => {
   assertRasterTextureUrl(String(textureUrl));
   if (previewImageUrl) assertRasterTextureUrl(String(previewImageUrl));
 
-  const playerUsername = await verifyUserCredentials(username, password);
+  const playerUsername = await verifyUserCredentials(username, password, context);
   const draftSnap = await db.collection(AVATAR_DRAFTS_COLLECTION).doc(String(draftId)).get();
   if (!draftSnap.exists) {
     throw new functions.https.HttpsError('not-found', 'Draft not found — generate a preview first');
@@ -1011,16 +1151,16 @@ async function uploadAvatarStudioTexture(buffer: Buffer, filename: string): Prom
 }
 
 /** Create a blank avatar studio project for the logged-in player. */
-export const createAvatarStudioProject = functions.https.onCall(async (data) => {
+export const createAvatarStudioProject = functions.https.onCall(async (data, context) => {
   const { username, password, targetPartType = 'shirt', name = 'Untitled project' } = data ?? {};
-  if (!username || !password) {
+  if (!username || (!password && !context?.auth?.uid)) {
     throw new functions.https.HttpsError('invalid-argument', 'Missing username or password');
   }
   if (!UGC_TEXTURE_PART_TYPES.has(String(targetPartType))) {
     throw new functions.https.HttpsError('invalid-argument', 'Invalid target part type');
   }
 
-  const playerUsername = await verifyUserCredentials(username, password);
+  const playerUsername = await verifyUserCredentials(username, password, context);
   const now = Date.now();
   const projectId = `studio-${now}-${crypto.randomBytes(4).toString('hex')}`;
   const project = {
@@ -1038,13 +1178,13 @@ export const createAvatarStudioProject = functions.https.onCall(async (data) => 
 });
 
 /** Save avatar studio project edits (owner-only). */
-export const updateAvatarStudioProject = functions.https.onCall(async (data) => {
+export const updateAvatarStudioProject = functions.https.onCall(async (data, context) => {
   const { username, password, project } = data ?? {};
-  if (!username || !password || !project?.id) {
+  if (!username || (!password && !context?.auth?.uid) || !project?.id) {
     throw new functions.https.HttpsError('invalid-argument', 'Missing username, password, or project');
   }
 
-  const playerUsername = await verifyUserCredentials(username, password);
+  const playerUsername = await verifyUserCredentials(username, password, context);
   const ref = db.collection(AVATAR_STUDIO_PROJECTS_COLLECTION).doc(String(project.id));
   const snap = await ref.get();
   if (!snap.exists) {
@@ -1075,13 +1215,13 @@ export const updateAvatarStudioProject = functions.https.onCall(async (data) => 
 });
 
 /** Load one studio project (owner-only). */
-export const getAvatarStudioProject = functions.https.onCall(async (data) => {
+export const getAvatarStudioProject = functions.https.onCall(async (data, context) => {
   const { username, password, projectId } = data ?? {};
-  if (!username || !password || !projectId) {
+  if (!username || (!password && !context?.auth?.uid) || !projectId) {
     throw new functions.https.HttpsError('invalid-argument', 'Missing username, password, or projectId');
   }
 
-  const playerUsername = await verifyUserCredentials(username, password);
+  const playerUsername = await verifyUserCredentials(username, password, context);
   const snap = await db.collection(AVATAR_STUDIO_PROJECTS_COLLECTION).doc(String(projectId)).get();
   if (!snap.exists) return null;
 
@@ -1093,13 +1233,13 @@ export const getAvatarStudioProject = functions.https.onCall(async (data) => {
 });
 
 /** List all studio projects owned by the player. */
-export const getMyAvatarStudioProjects = functions.https.onCall(async (data) => {
+export const getMyAvatarStudioProjects = functions.https.onCall(async (data, context) => {
   const { username, password } = data ?? {};
-  if (!username || !password) {
+  if (!username || (!password && !context?.auth?.uid)) {
     throw new functions.https.HttpsError('invalid-argument', 'Missing username or password');
   }
 
-  const playerUsername = await verifyUserCredentials(username, password);
+  const playerUsername = await verifyUserCredentials(username, password, context);
   const snap = await db
     .collection(AVATAR_STUDIO_PROJECTS_COLLECTION)
     .where('ownerUsername', '==', playerUsername)
@@ -1111,16 +1251,16 @@ export const getMyAvatarStudioProjects = functions.https.onCall(async (data) => 
 });
 
 /** Publish a studio project to the avatar shop with flattened texture (MIE-37). */
-export const publishAvatarStudioItem = functions.https.onCall(async (data) => {
+export const publishAvatarStudioItem = functions.https.onCall(async (data, context) => {
   const { username, password, projectId, name, description, textureBase64 } = data ?? {};
-  if (!username || !password || !projectId || !name || !textureBase64) {
+  if (!username || (!password && !context?.auth?.uid) || !projectId || !name || !textureBase64) {
     throw new functions.https.HttpsError('invalid-argument', 'Missing required publish fields');
   }
   if (isProfaneText(String(name))) {
     throw new functions.https.HttpsError('invalid-argument', 'Name contains blocked words');
   }
 
-  const playerUsername = await verifyUserCredentials(username, password);
+  const playerUsername = await verifyUserCredentials(username, password, context);
   const projectRef = db.collection(AVATAR_STUDIO_PROJECTS_COLLECTION).doc(String(projectId));
   const projectSnap = await projectRef.get();
   if (!projectSnap.exists) {

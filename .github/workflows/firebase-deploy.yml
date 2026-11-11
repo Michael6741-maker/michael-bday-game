@@ -186,9 +186,17 @@ jobs:
             return 1
           }
 
-          firebase_deploy hosting
-          firebase_deploy firestore:rules,storage
+          # Functions first so password sessions exist before rules start requiring them.
+          # Hosting next so players load the signed-in client, then rules.
           firebase_deploy functions
+          firebase_deploy hosting
+          if [ -n "${GOOGLE_APPLICATION_CREDENTIALS:-}" ]; then
+            echo "Moving password fields off public profiles before rules deploy..."
+            NODE_PATH="${GITHUB_WORKSPACE}/functions/node_modules" node scripts/migratePasswords.mjs
+          else
+            echo "::warning::Skipping password migration — no service account credentials."
+          fi
+          firebase_deploy firestore:rules,storage
 
       # Collapse legacy per-run leaderboard rows to one best score per username (MIE-22).
       # Idempotent: safe to run on every deploy once canonical docs exist.
