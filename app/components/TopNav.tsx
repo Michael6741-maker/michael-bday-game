@@ -5,6 +5,7 @@ import { User } from '../lib/types';
 import { logout } from '../lib/auth';
 import { getDisplayName } from '../lib/firestore';
 import { formatPrice } from '../lib/ballTypes';
+import { formatGems } from '../lib/gamepasses';
 import { getCurrentSeasonId, getCurrentSeasonConfig } from '../lib/seasons';
 import { getProPassConfig, isProPassActive, isProPassStarted } from '../lib/proPass';
 import { AVATAR_SHOP_HREF, AVATAR_STUDIO_HREF } from '../lib/avatarItems';
@@ -173,6 +174,11 @@ export default function TopNav({
                 <div className="flex items-center gap-1">
                   <span className="text-base sm:text-lg">🪙</span>
                   <span className="font-medium">{formatPrice(user.totalCoins)}</span>
+                </div>
+                <div className={`w-px h-4 ${transparent ? 'bg-white/30' : 'bg-gray-300'} hidden sm:block`} />
+                <div className="flex items-center gap-1">
+                  <span className="text-base sm:text-lg">💎</span>
+                  <span className="font-medium">{formatGems(user.totalGems ?? 0)}</span>
                 </div>
                 <div className={`w-px h-4 ${transparent ? 'bg-white/30' : 'bg-gray-300'} hidden sm:block`} />
                 <div className="flex items-center gap-1">
