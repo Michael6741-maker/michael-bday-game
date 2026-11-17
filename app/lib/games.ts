@@ -42,6 +42,15 @@ export const GAMES: GameDefinition[] = [
     gradient: 'from-sky-600 to-indigo-700',
     status: 'live',
   },
+  {
+    id: 'boogie-board',
+    title: 'Boogie Board',
+    tagline: 'Steer through the hole in every wave.',
+    href: '/boogie-board',
+    emoji: '🏄',
+    gradient: 'from-cyan-500 to-purple-600',
+    status: 'live',
+  },
 ];
 
 /** Route of the default game, used as the post-login landing target. */

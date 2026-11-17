@@ -161,6 +161,11 @@ canvas {
   -webkit-user-select: none;
 }
 
+/* 3D scenes opt out of the pixelated 2D canvas look. */
+.smooth-canvas canvas {
+  image-rendering: auto;
+}
+
 /* Prevent default touch behaviors */
 button {
   -webkit-tap-highlight-color: transparent;
