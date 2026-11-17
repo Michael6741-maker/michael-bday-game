@@ -2,9 +2,12 @@
 // Uses localStorage to persist user session across page reloads
 
 import { User } from './types';
+import { omitPassword } from './password';
 
-// LocalStorage key for current user session
+// LocalStorage key for current user session. The password is never written here.
 const CURRENT_USER_KEY = 'platform_drop_current_user';
+// In-memory only. Survives client-side navigation, cleared on logout and on refresh.
+let sessionPassword = '';
 
 /** Custom event name fired when login/logout updates the cached user. */
 export const USER_CHANGED_EVENT = 'platform-drop-user-changed';
@@ -26,24 +29,37 @@ export function getCurrentUser(): User | null {
     const stored = localStorage.getItem(CURRENT_USER_KEY);
     if (!stored) return null;
     
-    const user = JSON.parse(stored) as User;
+    const parsed = JSON.parse(stored) as User;
     // Validate the user has required fields
-    if (user.username && typeof user.totalCoins === 'number') {
-      return user;
+    if (!parsed.username || typeof parsed.totalCoins !== 'number') return null;
+    if (parsed.password) {
+      const safe = omitPassword(parsed);
+      localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(safe));
+      return safe;
     }
-    return null;
+    return parsed;
   } catch {
     return null;
   }
 }
 
-/**
- * Set the current user in localStorage (login/update)
- * @param user - The User object to store
- */
+/** Remember the password typed at login until logout or a full reload. Not stored. */
+export function rememberSessionPassword(password: string): void {
+  if (!password || password.startsWith('sha256:')) return;
+  sessionPassword = password;
+}
+
+/** Password typed at login, if this page session still has it. */
+export function getSessionPassword(): string {
+  return sessionPassword;
+}
+
 export function setCurrentUser(user: User): void {
   if (typeof window === 'undefined') return;
-  localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(user));
+  if (user.password && !user.password.startsWith('sha256:')) {
+    rememberSessionPassword(user.password);
+  }
+  localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(omitPassword(user)));
   notifyUserChanged();
 }
 
@@ -53,6 +69,7 @@ export function setCurrentUser(user: User): void {
 export function logout(): void {
   if (typeof window === 'undefined') return;
   localStorage.removeItem(CURRENT_USER_KEY);
+  sessionPassword = '';
   notifyUserChanged();
 }
 

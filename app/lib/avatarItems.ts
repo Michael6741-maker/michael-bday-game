@@ -336,14 +336,16 @@ export function getEmoteAnimationId(item: AvatarItem | undefined): string | null
 
 /** Ensure legacy users have avatar economy fields (call after login/load). */
 export function normalizeUserAvatarFields(user: User): User {
-  const owned = user.ownedAvatarItems ?? [...STARTER_OWNED_ITEM_IDS];
+  const safe = { ...user };
+  delete safe.password;
+  const owned = safe.ownedAvatarItems ?? [...STARTER_OWNED_ITEM_IDS];
   const equipped = user.equippedAvatar ?? createStarterEquippedAvatar();
   // Grant any missing built-in starter ownership
   const ownedSet = new Set(owned);
   for (const id of STARTER_OWNED_ITEM_IDS) ownedSet.add(id);
   return {
-    ...user,
-    skinColor: user.skinColor ?? DEFAULT_SKIN_COLOR,
+    ...safe,
+    skinColor: safe.skinColor ?? DEFAULT_SKIN_COLOR,
     ownedAvatarItems: Array.from(ownedSet),
     equippedAvatar: {
       ...createEmptyEquippedAvatar(),

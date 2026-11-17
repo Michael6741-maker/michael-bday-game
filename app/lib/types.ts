@@ -62,7 +62,7 @@ export interface User {
   isLegacyInitials?: boolean; // True for pre-MIE-23 three-letter accounts
   lastSeenAtMs?: number; // Online presence heartbeat (MIE-20)
   unreadChats?: Record<string, number>; // friendUsername -> unread count (MIE-20)
-  password: string;      // User's password
+  password?: string;     // Firestore password hash only. Omitted from the browser profile.
   totalMeters: number;   // Cumulative distance traveled across all games
   totalCoins: number;    // Cumulative coins collected
   totalGems?: number;    // Cumulative gems earned (MIE-9)
@@ -314,6 +314,7 @@ export interface RenameUserResult {
   username: string;
   displayName: string;
   message?: string;
+  token?: string;
 }
 
 /**
