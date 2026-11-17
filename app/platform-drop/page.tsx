@@ -204,7 +204,7 @@ export default function Home() {
                     <div className="flex items-center gap-2">
                       <span className="text-2xl">{seasonConfig.emoji}</span>
                       <div>
-                        <p className="text-sm font-bold text-gray-800">{seasonConfig.displayName} Season</p>
+                        <p className="text-sm font-bold text-gray-800">{seasonConfig.displayName}</p>
                         <p className="text-xs text-gray-500">{formatPrice(seasonMeters)}m this season</p>
                       </div>
                     </div>

@@ -120,7 +120,7 @@ export function isAvatarCreator(username: string): boolean {
  * Built-in starter items (always available, free) until creators publish more.
  * Merged with Firestore catalog on read.
  */
-export const BUILTIN_AVATAR_ITEMS: AvatarItem[] = [
+const STARTER_AVATAR_ITEMS: AvatarItem[] = [
   {
     id: 'starter-shirt-blue',
     name: 'Starter Blue Tee',
@@ -196,7 +196,89 @@ export const BUILTIN_AVATAR_ITEMS: AvatarItem[] = [
   },
 ];
 
-export const STARTER_OWNED_ITEM_IDS = BUILTIN_AVATAR_ITEMS.map((item) => item.id);
+const SEASON_PIECES: {
+  season: number;
+  theme: string;
+  key: string;
+  part: 'shirt' | 'hair' | 'pants';
+  label: string;
+}[] = [
+  { season: 1, theme: 'Frost', key: 'frost', part: 'shirt', label: 'Tee' },
+  { season: 1, theme: 'Frost', key: 'frost', part: 'hair', label: 'Hair' },
+  { season: 1, theme: 'Frost', key: 'frost', part: 'pants', label: 'Pants' },
+  { season: 2, theme: 'Ember', key: 'ember', part: 'shirt', label: 'Tee' },
+  { season: 2, theme: 'Ember', key: 'ember', part: 'hair', label: 'Hair' },
+  { season: 2, theme: 'Ember', key: 'ember', part: 'pants', label: 'Pants' },
+  { season: 3, theme: 'Moss', key: 'moss', part: 'shirt', label: 'Tee' },
+  { season: 3, theme: 'Moss', key: 'moss', part: 'hair', label: 'Hair' },
+  { season: 3, theme: 'Moss', key: 'moss', part: 'pants', label: 'Pants' },
+  { season: 4, theme: 'Royal', key: 'royal', part: 'shirt', label: 'Tee' },
+  { season: 4, theme: 'Royal', key: 'royal', part: 'hair', label: 'Hair' },
+  { season: 4, theme: 'Royal', key: 'royal', part: 'pants', label: 'Pants' },
+];
+
+const SEASON_META: Record<number, { theme: string; emoji: string; accentColor: string }> = {
+  1: { theme: 'Frost', emoji: '❄️', accentColor: '#38bdf8' },
+  2: { theme: 'Ember', emoji: '🔥', accentColor: '#ea580c' },
+  3: { theme: 'Moss', emoji: '🌿', accentColor: '#16a34a' },
+  4: { theme: 'Royal', emoji: '👑', accentColor: '#7c3aed' },
+};
+
+/** Pass-exclusive wear. Off sale, so the avatar shop hides them until claimed. */
+export const SEASON_AVATAR_ITEMS: AvatarItem[] = SEASON_PIECES.map((piece) => ({
+  id: `season-${piece.season}-${piece.key}-${piece.part}`,
+  name: `${piece.theme} ${piece.label}`,
+  description: `Season ${piece.season} exclusive. Claim it from the premium track at 25,000m.`,
+  creatorUsername: 'SYSTEM',
+  partType: piece.part,
+  gemPrice: 0,
+  onSale: false,
+  stock: null,
+  previewImageUrl: `/season-${piece.season}-${piece.key}-${piece.part}.svg`,
+  textureUrl: `/season-${piece.season}-${piece.key}-${piece.part}-texture.png`,
+  source: 'system',
+  createdAtMs: 0,
+  updatedAtMs: 0,
+}));
+
+/** One outfit per numbered season. Tier 25 of the premium track grants every piece. */
+export interface SeasonOutfit {
+  seasonNumber: number;
+  label: string;
+  emoji: string;
+  accentColor: string;
+  itemIds: string[];
+  featuredItemId: string;
+}
+
+export const SEASON_OUTFITS: SeasonOutfit[] = [1, 2, 3, 4].map((seasonNumber) => {
+  const pieces = SEASON_AVATAR_ITEMS.filter((item) => item.id.startsWith(`season-${seasonNumber}-`));
+  const shirt = pieces.find((item) => item.partType === 'shirt');
+  const meta = SEASON_META[seasonNumber];
+  return {
+    seasonNumber,
+    label: `${meta.theme} Outfit`,
+    emoji: meta.emoji,
+    accentColor: meta.accentColor,
+    itemIds: pieces.map((item) => item.id),
+    featuredItemId: shirt?.id ?? pieces[0].id,
+  };
+});
+
+export const BUILTIN_AVATAR_ITEMS: AvatarItem[] = [
+  ...STARTER_AVATAR_ITEMS,
+  ...SEASON_AVATAR_ITEMS,
+];
+
+export const STARTER_OWNED_ITEM_IDS = STARTER_AVATAR_ITEMS.map((item) => item.id);
+
+export function getSeasonAvatarItemById(itemId: string): AvatarItem | undefined {
+  return SEASON_AVATAR_ITEMS.find((item) => item.id === itemId);
+}
+
+export function isSeasonAvatarItemId(itemId: string): boolean {
+  return SEASON_AVATAR_ITEMS.some((item) => item.id === itemId);
+}
 
 /** Limited head-wear catalog row — seeded to Firestore on first /avatars visit (MIE-47). */
 export const HEADLESS_HEAD_ITEM_ID = 'headless-head-limited';

@@ -5,12 +5,13 @@ import { useRouter, useParams } from 'next/navigation';
 import { User } from '../../lib/types';
 import { getCurrentUser, setCurrentUser } from '../../lib/auth';
 import { claimSeasonReward, purchaseSeasonPremium, getUserData, getSeasonConfigWithFallback } from '../../lib/firestore';
+import { getSeasonAvatarItemById } from '../../lib/avatarItems';
 import {
   getCurrentSeasonId,
   getTimeRemainingForConfig,
   formatReward,
   rewardEmoji,
-  getSeasonBallById,
+  rewardAvatarItemIds,
   SeasonConfig,
   SeasonReward,
 } from '../../lib/seasons';
@@ -18,6 +19,42 @@ import { formatPrice } from '../../lib/ballTypes';
 import MenuBackground from '../../components/MenuBackground';
 import { PageHeader, PageHero, StatPill, Alert } from '../../components/ui';
 import { DEFAULT_GAME_HREF } from '../../lib/games';
+
+function SeasonOutfitPreview({ config, muted = false }: { config: SeasonConfig; muted?: boolean }) {
+  const items = config.avatarItemIds
+    .map((id) => getSeasonAvatarItemById(id))
+    .filter((item): item is NonNullable<ReturnType<typeof getSeasonAvatarItemById>> => Boolean(item));
+  const featured = getSeasonAvatarItemById(config.featuredAvatarItemId) ?? items[0];
+
+  return (
+    <div className={`flex flex-col items-center gap-2 ${muted ? 'mb-6' : ''}`}>
+      <div className="relative">
+        <div
+          className={`absolute inset-0 -m-2 rounded-2xl ${muted ? 'opacity-20' : 'opacity-30 animate-pulse'}`}
+          style={{ backgroundColor: config.accentColor }}
+        />
+        <div
+          className={`relative w-16 h-16 sm:w-20 sm:h-20 rounded-2xl flex items-center justify-center shadow-lg overflow-hidden bg-white ${muted ? 'grayscale opacity-60' : ''}`}
+          style={{ border: `3px solid ${config.accentColor}` }}
+        >
+          {featured?.previewImageUrl && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={featured.previewImageUrl} alt={featured.name} className="w-12 h-12 sm:w-14 sm:h-14" />
+          )}
+        </div>
+      </div>
+      {items.length > 1 && (
+        <div className="flex items-center gap-1">
+          {items.map((item) => item.previewImageUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img key={item.id} src={item.previewImageUrl} alt={item.name} className="w-6 h-6 rounded" />
+          ) : null)}
+        </div>
+      )}
+      <p className="text-xs font-medium text-gray-500 text-center">{config.outfitLabel}</p>
+    </div>
+  );
+}
 
 export default function SeasonClient() {
   const router = useRouter();
@@ -124,27 +161,7 @@ export default function SeasonClient() {
             </p>
           )}
 
-          {/* Preview of the season ball */}
-          <div className="flex flex-col items-center gap-2 mb-6">
-            <div className="relative">
-              <div className="absolute inset-0 -m-2 rounded-full opacity-20" style={{ backgroundColor: config.seasonBall.color }} />
-              <div
-                className="relative w-20 h-20 rounded-full flex items-center justify-center shadow-lg grayscale opacity-60"
-                style={{
-                  backgroundColor: config.seasonBall.color,
-                  borderColor: config.seasonBall.strokeColor,
-                  borderWidth: '3px',
-                  borderStyle: 'solid',
-                }}
-              >
-                {config.seasonBall.imageUrl && (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={config.seasonBall.imageUrl} alt="" className="w-12 h-12" />
-                )}
-              </div>
-            </div>
-            <p className="text-xs font-medium text-gray-500">Season Ball: {config.seasonBall.name}</p>
-          </div>
+          <SeasonOutfitPreview config={config} muted />
 
           <button
             onClick={() => router.push(DEFAULT_GAME_HREF)}
@@ -254,24 +271,12 @@ export default function SeasonClient() {
         {state !== 'claimed' && (
           <>
             {(() => {
-              const ball = reward.type === 'ball' && reward.ballId ? getSeasonBallById(reward.ballId) : null;
-              if (ball?.imageUrl) {
+              const previewId = rewardAvatarItemIds(reward)[0];
+              const item = previewId ? getSeasonAvatarItemById(previewId) : undefined;
+              if (item?.previewImageUrl) {
                 return (
-                  <span
-                    className="w-6 h-6 sm:w-7 sm:h-7 rounded-full flex items-center justify-center"
-                    style={{
-                      backgroundColor: ball.color,
-                      border: `2px solid ${ball.strokeColor}`,
-                    }}
-                  >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={ball.imageUrl}
-                      alt={ball.name}
-                      className="w-4 h-4 sm:w-5 sm:h-5"
-                      style={ball.imageFilter ? { filter: ball.imageFilter } : undefined}
-                    />
-                  </span>
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={item.previewImageUrl} alt={item.name} className="w-6 h-6 sm:w-7 sm:h-7" />
                 );
               }
               return <span className="text-lg">{rewardEmoji(reward)}</span>;
@@ -354,23 +359,7 @@ export default function SeasonClient() {
                 )}
               </div>
 
-              <div className="relative">
-                <div className="absolute inset-0 -m-3 rounded-full animate-pulse opacity-30" style={{ backgroundColor: config.seasonBall.color }} />
-                <div
-                  className="relative w-14 h-14 sm:w-20 sm:h-20 rounded-full flex items-center justify-center shadow-lg z-10"
-                  style={{
-                    backgroundColor: config.seasonBall.color,
-                    borderColor: config.seasonBall.strokeColor,
-                    borderWidth: '3px',
-                    borderStyle: 'solid',
-                  }}
-                >
-                  {config.seasonBall.imageUrl && (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={config.seasonBall.imageUrl} alt="" className="w-8 h-8 sm:w-12 sm:h-12" />
-                  )}
-                </div>
-              </div>
+              <SeasonOutfitPreview config={config} />
 
               {!premiumUnlocked ? (
                 <button

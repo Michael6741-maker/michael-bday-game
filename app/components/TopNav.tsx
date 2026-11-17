@@ -6,7 +6,6 @@ import { logout } from '../lib/auth';
 import { getDisplayName } from '../lib/firestore';
 import { formatPrice } from '../lib/ballTypes';
 import { getCurrentSeasonId, getCurrentSeasonConfig } from '../lib/seasons';
-import { getProPassConfig, isProPassActive, isProPassStarted } from '../lib/proPass';
 import { AVATAR_SHOP_HREF, AVATAR_STUDIO_HREF } from '../lib/avatarItems';
 
 interface TopNavProps {
@@ -47,15 +46,7 @@ export default function TopNav({
   const handleFriends = () => router.push('/friends');
   const handleLevels = () => router.push('/levels');
   const handleAdmin = () => router.push('/admin');
-  const handleProPass = () => router.push('/pro-pass');
   const seasonConfig = getCurrentSeasonConfig();
-  const proPassConfig = getProPassConfig();
-  // Show Pro Pass nav while active/upcoming, or when the user has saved progress for this pass.
-  const showProPassButton =
-    !!user &&
-    (isProPassActive() ||
-      !isProPassStarted() ||
-      user.proPassData?.passId === proPassConfig.id);
 
   // Static surface (no hover) for stat/username containers.
   const surfaceClass = transparent
@@ -128,16 +119,6 @@ export default function TopNav({
               <span className="hidden sm:inline text-sm">Levels</span>
             </button>
           )}
-          {/* Non-admins: Pro Pass sits right after Settings */}
-          {showProPassButton && !user.isAdmin && (
-            <button
-              onClick={handleProPass}
-              className={navButtonClass}
-            >
-              <span className="text-lg">{proPassConfig.emoji}</span>
-              <span className="hidden sm:inline text-sm">Pro Pass</span>
-            </button>
-          )}
           {user?.isAdmin && (
             <button
               onClick={handleAdmin}
@@ -145,16 +126,6 @@ export default function TopNav({
             >
               <span className="text-lg">🛠️</span>
               <span className="hidden sm:inline text-sm">Admin</span>
-            </button>
-          )}
-          {/* Admins: Pro Pass sits right after Admin */}
-          {showProPassButton && user?.isAdmin && (
-            <button
-              onClick={handleProPass}
-              className={navButtonClass}
-            >
-              <span className="text-lg">{proPassConfig.emoji}</span>
-              <span className="hidden sm:inline text-sm">Pro Pass</span>
             </button>
           )}
         </div>

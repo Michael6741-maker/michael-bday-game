@@ -76,7 +76,7 @@ export interface User {
   createdAt: string;     // ISO date string when account was created
   extraBalls: number;    // Count of extra-ball revival items
   seasonData: SeasonData | null; // Current season progress (null if never interacted)
-  proPassData?: ProPassData | null; // Parallel 4-month Pro Pass progress
+  proPassData?: ProPassData | null; // Retired Pro Pass progress. The pass no longer updates this.
   verified?: boolean;    // True for users granted a verified badge in the leaderboard
   isAdmin?: boolean;     // True for users allowed to access the /admin panel
   seenMessageIds?: string[]; // Global broadcast messages this user has dismissed
@@ -320,7 +320,7 @@ export interface RenameUserResult {
  * Season progress stored on the user document
  */
 export interface SeasonData {
-  seasonId: string;          // e.g. "april-2026"
+  seasonId: string;          // e.g. "season-1"
   meters: number;            // meters accumulated this season
   premiumUnlocked: boolean;  // whether player paid for premium track
   claimedFree: number[];     // level indices (0-4) already claimed on free track
@@ -328,7 +328,8 @@ export interface SeasonData {
 }
 
 /**
- * Pro Pass progress stored on the user document (June–September 2026 window).
+ * Leftover Pro Pass progress from the retired June–September 2026 pass.
+ * Kept so old user documents still load. Nothing writes it anymore.
  */
 export interface ProPassData {
   passId: string;              // e.g. "pro-pass-june-sept-2026"

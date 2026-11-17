@@ -3,8 +3,13 @@
 // Uses Twemoji and local artwork for themed ball images
 
 import { BallType } from './types';
-import { SEASON_CONFIGS, getSeasonBallById } from './seasons';
-import { getProPassBallById, PRO_PASS_BALLS } from './proPass';
+import {
+  getLegacySeasonBallById,
+  getProPassBallById,
+  LEGACY_SEASON_BALLS,
+  PRO_PASS_BALLS,
+  SHOP_OFFER_ONLY_BALLS,
+} from './exclusiveBalls';
 import { AURORA_BALL_ID } from './aurora';
 import { VIP_BALL_ID } from './gamepasses';
 import { FOSSIL_BALLS, getFossilBallById } from './fossilCraft';
@@ -191,7 +196,7 @@ export const BALL_TYPES: BallType[] = [
 export function getBallTypeById(ballId: string): BallType {
   return (
     BALL_TYPES.find((b) => b.id === ballId) ||
-    getSeasonBallById(ballId) ||
+    getLegacySeasonBallById(ballId) ||
     getProPassBallById(ballId) ||
     getFossilBallById(ballId) ||
     BALL_TYPES[0]
@@ -208,13 +213,13 @@ export function getDefaultBallType(): BallType {
 
 /**
  * Balls that admins can place in limited-time shop offers.
- * Season and Pro Pass balls are included even if players normally earn them elsewhere.
+ * Retired season and Pro Pass balls stay here. A shop offer is the only way to get one.
  */
 export function getOfferableBallTypes(): BallType[] {
   const seen = new Set<string>();
   return [
     ...BALL_TYPES,
-    ...SEASON_CONFIGS.map((season) => season.seasonBall),
+    ...LEGACY_SEASON_BALLS,
     ...PRO_PASS_BALLS,
   ].filter((ball) => {
     if (ball.isDefault || seen.has(ball.id)) return false;
@@ -244,6 +249,8 @@ const NON_GIFTABLE_BALL_IDS = new Set([
   AURORA_BALL_ID,
   VIP_BALL_ID,
   ...FOSSIL_BALLS.map((ball) => ball.id),
+  // Retired exclusives return only through a shop offer, never a gift.
+  ...SHOP_OFFER_ONLY_BALLS.map((ball) => ball.id),
 ]);
 
 /**
