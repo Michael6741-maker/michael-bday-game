@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import { getSeasonAvatarItemById } from "./lib/avatarItems";
 import { getCurrentSeasonConfig } from "./lib/seasons";
 import GlobalNotifications from "./components/GlobalNotifications";
 import PollModal from "./components/PollModal";
@@ -18,14 +19,17 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-// Favicon is the current season's exclusive ball, resolved at build time.
-const seasonBallIcon = getCurrentSeasonConfig()?.seasonBall.imageUrl;
+// Favicon is the current season's featured avatar piece, resolved at build time.
+const seasonIcon = (() => {
+  const featuredId = getCurrentSeasonConfig()?.featuredAvatarItemId;
+  return featuredId ? getSeasonAvatarItemById(featuredId)?.previewImageUrl : undefined;
+})();
 
 export const metadata: Metadata = {
   title: "Michael's Drop Game",
   description: "Survive the rising platforms!",
-  icons: seasonBallIcon
-    ? { icon: [{ url: seasonBallIcon, type: "image/svg+xml" }] }
+  icons: seasonIcon
+    ? { icon: [{ url: seasonIcon, type: "image/svg+xml" }] }
     : undefined,
 };
 

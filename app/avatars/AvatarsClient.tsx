@@ -331,7 +331,12 @@ export default function AvatarsClient() {
                   )}
                   {verifiedCreators.has(item.creatorUsername) && <VerifiedBadge />}
                 </p>
-                {offsale && <p className="text-xs text-gray-400 font-medium mb-1">Offsale</p>}
+                {offsale && !item.id.startsWith('season-') && (
+                  <p className="text-xs text-gray-400 font-medium mb-1">Offsale</p>
+                )}
+                {owned && item.id.startsWith('season-') && (
+                  <p className="text-xs text-purple-600 font-medium mb-1">Season reward</p>
+                )}
                 {!owned && item.onSale && !soldOut && (
                   <p className={`text-xs font-semibold mb-2 ${canAfford || item.gemPrice === 0 ? 'text-cyan-600' : 'text-red-500'}`}>
                     {item.gemPrice === 0 ? 'Free' : `${formatGems(item.gemPrice)} gems`}

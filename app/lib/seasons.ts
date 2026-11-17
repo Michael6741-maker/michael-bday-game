@@ -1,12 +1,16 @@
-import type { BallType } from './types';
+import { getSeasonAvatarItemById, SEASON_OUTFITS, type SeasonOutfit } from './avatarItems';
 
 /**
  * Reward granted at a season achievement level.
+ * Season balls are not a reward. The tier-25 premium prize is avatar items.
  */
 export interface SeasonReward {
-  type: 'coins' | 'extraBall' | 'ball';
-  amount?: number;   // for coins
-  ballId?: string;   // for ball rewards
+  type: 'coins' | 'extraBall' | 'avatarItem';
+  amount?: number;
+  avatarItemId?: string;
+  avatarItemIds?: string[];
+  /** Short label for a multi-item prize, e.g. "Frost Outfit". */
+  label?: string;
 }
 
 /**
@@ -19,80 +23,45 @@ export interface SeasonLevel {
 }
 
 /**
- * Full configuration for one season (one calendar month).
+ * Full configuration for one numbered season (one calendar month).
+ * Season 1 is November 2026. Each later season is the next month.
  */
 export interface SeasonConfig {
-  id: string;             // e.g. "april-2026"
-  displayName: string;    // e.g. "April 2026"
-  month: number;          // 1-indexed (4 = April)
+  id: string;             // e.g. "season-1"
+  displayName: string;    // e.g. "Season 1"
+  month: number;          // 1-indexed calendar month this season occupies
   year: number;
-  premiumCost: number;    // coins to unlock premium track
-  levels: SeasonLevel[];  // exactly 5 levels
-  seasonBall: BallType;   // the exclusive ball for this season
-  emoji: string;          // decorative emoji for UI
+  premiumCost: number;    // coins to unlock the top row
+  levels: SeasonLevel[];  // exactly 25 levels
+  emoji: string;
+  accentColor: string;
+  outfitLabel: string;
+  avatarItemIds: string[];
+  featuredAvatarItemId: string;
 }
 
 // ---------------------------------------------------------------------------
 // Season definitions
 // ---------------------------------------------------------------------------
 
-const APRIL_2026_BALL: BallType = {
-  id: 'april-radioactive-2026',
-  name: 'Radioactive',
-  price: 0,
-  color: '#39FF14',
-  strokeColor: '#006400',
-  isDefault: false,
-  imageUrl: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/svg/2622.svg',
-  description: 'Season exclusive — April 2026',
-};
-
-const MAY_2026_BALL: BallType = {
-  id: 'may-pokeball-2026',
-  name: 'Pok\u00e9ball',
-  price: 0,
-  color: '#EE1515',
-  strokeColor: '#222222',
-  isDefault: false,
-  imageUrl: 'https://upload.wikimedia.org/wikipedia/commons/5/53/Pok%C3%A9_Ball_icon.svg',
-  description: 'Season exclusive — May 2026',
-};
-
-const JUNE_2026_BALL: BallType = {
-  id: 'june-yinyang-2026',
-  name: 'Yin Yang',
-  price: 0,
-  color: '#FFFFFF',
-  strokeColor: '#000000',
-  isDefault: false,
-  imageUrl: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/svg/262f.svg',
-  description: 'Season exclusive — June 2026',
-};
-
-const JULY_2026_BALL: BallType = {
-  id: 'july-basketball-2026',
-  name: 'Basketball',
-  price: 0,
-  color: '#f97316',
-  strokeColor: '#111827',
-  isDefault: false,
-  // Season 4 uses local generated art so the basketball reward is not dependent on an external image host.
-  imageUrl: '/basketball-ball.svg',
-  description: 'Season exclusive — July 2026',
-};
-
 // 25-tier season pass.
 //   Free track (bottom row):     1 revive ball every 6 tiers (6, 12, 18, 24); otherwise 200 coins.
 //   Premium track (top row):     1 revive ball every 3 tiers (3, 6, 9, 12, 15, 18, 21, 24);
-//                                 the season-exclusive ball at tier 25; otherwise 200 coins.
+//                                 the season avatar outfit at tier 25; otherwise 200 coins.
 //   Thresholds: 1000m per tier (1k–25k).
+//   Top row unlock: 15,000 coins.
 const TOTAL_TIERS = 25;
 const METERS_PER_TIER = 1000;
 const COIN_REWARD = 200;
 const FREE_REVIVE_EVERY = 6;
 const PREMIUM_REVIVE_EVERY = 3;
+const PREMIUM_COST = 15000;
 
-const STANDARD_LEVELS = (seasonBall: BallType): SeasonLevel[] => {
+/** Season 1 occupies November 2026. Season 2 is December 2026, and so on. */
+const SEASON_1_YEAR = 2026;
+const SEASON_1_MONTH = 11;
+
+const STANDARD_LEVELS = (avatarItemIds: string[], outfitLabel: string): SeasonLevel[] => {
   const levels: SeasonLevel[] = [];
   for (let i = 1; i <= TOTAL_TIERS; i++) {
     const freeReward: SeasonReward =
@@ -102,7 +71,7 @@ const STANDARD_LEVELS = (seasonBall: BallType): SeasonLevel[] => {
 
     let premiumReward: SeasonReward;
     if (i === TOTAL_TIERS) {
-      premiumReward = { type: 'ball', ballId: seasonBall.id };
+      premiumReward = { type: 'avatarItem', avatarItemIds, label: outfitLabel };
     } else if (i % PREMIUM_REVIVE_EVERY === 0) {
       premiumReward = { type: 'extraBall', amount: 1 };
     } else {
@@ -118,62 +87,43 @@ const STANDARD_LEVELS = (seasonBall: BallType): SeasonLevel[] => {
   return levels;
 };
 
-export const SEASON_CONFIGS: SeasonConfig[] = [
-  {
-    id: 'april-2026',
-    displayName: 'April 2026',
-    month: 4,
-    year: 2026,
-    premiumCost: 15000,
-    emoji: '☢️',
-    seasonBall: APRIL_2026_BALL,
-    levels: STANDARD_LEVELS(APRIL_2026_BALL),
-  },
-  {
-    id: 'may-2026',
-    displayName: 'May 2026',
-    month: 5,
-    year: 2026,
-    premiumCost: 15000,
-    emoji: '🔴',
-    seasonBall: MAY_2026_BALL,
-    levels: STANDARD_LEVELS(MAY_2026_BALL),
-  },
-  {
-    id: 'june-2026',
-    displayName: 'June 2026',
-    month: 6,
-    year: 2026,
-    premiumCost: 15000,
-    emoji: '☯️',
-    seasonBall: JUNE_2026_BALL,
-    levels: STANDARD_LEVELS(JUNE_2026_BALL),
-  },
-  {
-    id: 'july-2026',
-    displayName: 'July 2026',
-    month: 7,
-    year: 2026,
-    premiumCost: 15000,
-    emoji: '🏀',
-    seasonBall: JULY_2026_BALL,
-    levels: STANDARD_LEVELS(JULY_2026_BALL),
-  },
-];
+function buildSeason(outfit: SeasonOutfit): SeasonConfig {
+  const index = outfit.seasonNumber - 1;
+  const monthIndex = SEASON_1_MONTH - 1 + index;
+  const year = SEASON_1_YEAR + Math.floor(monthIndex / 12);
+  const month = (monthIndex % 12) + 1;
+
+  return {
+    id: `season-${outfit.seasonNumber}`,
+    displayName: `Season ${outfit.seasonNumber}`,
+    month,
+    year,
+    premiumCost: PREMIUM_COST,
+    emoji: outfit.emoji,
+    accentColor: outfit.accentColor,
+    outfitLabel: outfit.label,
+    avatarItemIds: outfit.itemIds,
+    featuredAvatarItemId: outfit.featuredItemId,
+    levels: STANDARD_LEVELS(outfit.itemIds, outfit.label),
+  };
+}
+
+export const SEASON_CONFIGS: SeasonConfig[] = SEASON_OUTFITS.map(buildSeason);
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-const MONTH_NAMES = [
-  'january', 'february', 'march', 'april', 'may', 'june',
-  'july', 'august', 'september', 'october', 'november', 'december',
-];
+/** 1-based season number for a date. November 2026 is 1. Earlier dates are below 1. */
+export function getSeasonNumber(now: Date = new Date()): number {
+  const months =
+    (now.getFullYear() - SEASON_1_YEAR) * 12 + (now.getMonth() + 1 - SEASON_1_MONTH);
+  return months + 1;
+}
 
-/** Derive a season id like "april-2026" from the current date. */
-export function getCurrentSeasonId(): string {
-  const now = new Date();
-  return `${MONTH_NAMES[now.getMonth()]}-${now.getFullYear()}`;
+/** Season id like "season-1" for the calendar month containing `now`. */
+export function getCurrentSeasonId(now: Date = new Date()): string {
+  return `season-${getSeasonNumber(now)}`;
 }
 
 /** Look up a season config by id. */
@@ -181,27 +131,27 @@ export function getSeasonConfig(seasonId: string): SeasonConfig | null {
   return SEASON_CONFIGS.find((s) => s.id === seasonId) ?? null;
 }
 
-/** Shorthand: config for the current calendar month. */
-export function getCurrentSeasonConfig(): SeasonConfig | null {
-  return getSeasonConfig(getCurrentSeasonId());
+/** Shorthand: config for the current calendar month, if one is defined. */
+export function getCurrentSeasonConfig(now: Date = new Date()): SeasonConfig | null {
+  return getSeasonConfig(getCurrentSeasonId(now));
 }
 
 /** Days remaining in the season (including today). */
-export function getDaysRemaining(seasonId: string): number {
+export function getDaysRemaining(seasonId: string, now: Date = new Date()): number {
   const config = getSeasonConfig(seasonId);
   if (!config) return 0;
 
-  const now = new Date();
-  // First day of the next month (season end boundary).
-  const seasonEnd = new Date(config.year, config.month, 1); // month is 1-indexed, Date uses 0-indexed → this is correct (month 4 → May 1)
+  const seasonEnd = new Date(config.year, config.month, 1);
   const msPerDay = 1000 * 60 * 60 * 24;
   const remaining = Math.ceil((seasonEnd.getTime() - now.getTime()) / msPerDay);
   return Math.max(0, remaining);
 }
 
 /** Detailed time remaining for an already-loaded season config. */
-export function getTimeRemainingForConfig(config: SeasonConfig): { days: number; hours: number; minutes: number } {
-  const now = new Date();
+export function getTimeRemainingForConfig(
+  config: SeasonConfig,
+  now: Date = new Date(),
+): { days: number; hours: number; minutes: number } {
   const seasonEnd = new Date(config.year, config.month, 1);
   const diff = Math.max(0, seasonEnd.getTime() - now.getTime());
   const days = Math.floor(diff / (1000 * 60 * 60 * 24));
@@ -211,30 +161,20 @@ export function getTimeRemainingForConfig(config: SeasonConfig): { days: number;
 }
 
 /** Detailed time remaining: days, hours, minutes. */
-export function getTimeRemaining(seasonId: string): { days: number; hours: number; minutes: number } {
+export function getTimeRemaining(seasonId: string, now: Date = new Date()): { days: number; hours: number; minutes: number } {
   const config = getSeasonConfig(seasonId);
   if (!config) return { days: 0, hours: 0, minutes: 0 };
 
-  return getTimeRemainingForConfig(config);
+  return getTimeRemainingForConfig(config, now);
 }
 
-/** Look up a season ball across all configs by ball id. */
-export function getSeasonBallById(ballId: string): BallType | null {
-  for (const config of SEASON_CONFIGS) {
-    if (config.seasonBall.id === ballId) return config.seasonBall;
-  }
-  return null;
-}
-
-/** Get all season balls owned by a user. */
-export function getOwnedSeasonBalls(ownedBalls: string[]): BallType[] {
-  const result: BallType[] = [];
-  for (const config of SEASON_CONFIGS) {
-    if (ownedBalls.includes(config.seasonBall.id)) {
-      result.push(config.seasonBall);
-    }
-  }
-  return result;
+/** Avatar item ids granted by a reward, in catalog order. */
+export function rewardAvatarItemIds(reward: SeasonReward): string[] {
+  const ids = [
+    ...(reward.avatarItemIds ?? []),
+    ...(reward.avatarItemId ? [reward.avatarItemId] : []),
+  ];
+  return ids.filter((id, index) => ids.indexOf(id) === index);
 }
 
 /** Human-readable label for a reward. */
@@ -244,9 +184,12 @@ export function formatReward(reward: SeasonReward): string {
       return `${reward.amount?.toLocaleString()} coins`;
     case 'extraBall':
       return `${reward.amount ?? 1} extra ball`;
-    case 'ball': {
-      const ball = reward.ballId ? getSeasonBallById(reward.ballId) : null;
-      return ball ? ball.name : 'Season Ball';
+    case 'avatarItem': {
+      if (reward.label) return reward.label;
+      const names = rewardAvatarItemIds(reward)
+        .map((id) => getSeasonAvatarItemById(id)?.name)
+        .filter((name): name is string => Boolean(name));
+      return names.length > 0 ? names.join(', ') : 'Avatar items';
     }
   }
 }
@@ -256,6 +199,6 @@ export function rewardEmoji(reward: SeasonReward): string {
   switch (reward.type) {
     case 'coins': return '🪙';
     case 'extraBall': return '🔮';
-    case 'ball': return '☢️';
+    case 'avatarItem': return '👕';
   }
 }

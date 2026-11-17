@@ -403,7 +403,7 @@ function OffersTab({ admin }: { admin: User }) {
         <div className="space-y-3">
           <div>
             <label className="block text-xs font-semibold text-gray-600 mb-1.5">Offer item</label>
-            {/* Scrollable picker so admins can reach every restockable ball, including Pro Pass exclusives. */}
+            {/* Scrollable picker so admins can offer any ball, including retired season and Pro Pass balls. */}
             <div
               className="w-full border border-gray-300 rounded-lg bg-white overflow-y-auto"
               style={{ maxHeight: 'min(320px, 50vh)' }}
