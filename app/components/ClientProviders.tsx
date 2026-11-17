@@ -1,6 +1,7 @@
 'use client';
 
 import PlayerSettingsProvider from './PlayerSettingsProvider';
+import BanGate from './BanGate';
 
 /**
  * Client-side provider bundle for the root layout.
@@ -11,5 +12,9 @@ export default function ClientProviders({
 }: {
   children: React.ReactNode;
 }) {
-  return <PlayerSettingsProvider>{children}</PlayerSettingsProvider>;
+  return (
+    <PlayerSettingsProvider>
+      <BanGate>{children}</BanGate>
+    </PlayerSettingsProvider>
+  );
 }

@@ -25,6 +25,8 @@ import {
 } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { db, functions } from './firebase';
+import { getCurrentUser } from './auth';
+import { formatBanMessage, type BanStatus } from './ban';
 import { Score, User, SeasonData, ProPassData, LoginCredentials, GameEvent, GameEventType, BroadcastMessage, ShopOffer, Poll, PlayerSettings, PendingGift, GiftTransaction, RenameUserResult, LevelDocument, FriendRequest, Friendship, ChatMessage, RaceChallenge, FossilTypeId } from './types';
 import { getCurrentSeasonId, getSeasonConfig } from './seasons';
 import type { SeasonConfig } from './seasons';
@@ -97,8 +99,15 @@ export interface ScoreSubmitResult {
  */
 export async function startGameSession(): Promise<GameSession> {
   try {
-    const startSession = httpsCallable<void, GameSession>(functions, 'startGameSession');
-    const result = await startSession();
+    const user = getCurrentUser();
+    const startSession = httpsCallable<{ username?: string; password?: string }, GameSession>(
+      functions,
+      'startGameSession',
+    );
+    const result = await startSession({
+      username: user?.username,
+      password: user?.password,
+    });
     console.log('Game session started:', result.data.sessionId);
     return result.data;
   } catch (error) {
@@ -454,6 +463,108 @@ export async function loginUser(credentials: LoginCredentials): Promise<User> {
     console.error('Error logging in:', error);
     throw error;
   }
+}
+
+export interface PlayAccessResult {
+  banned: boolean;
+  reason: string;
+  message: string;
+  permanent: boolean;
+  endsAtMs: number | null;
+}
+
+export interface BanActionResult {
+  success: true;
+  username: string;
+  permanent?: boolean;
+  endsAtMs?: number | null;
+  networks?: string[];
+  changed?: boolean;
+}
+
+/** Ask the server to record this connection and say if the account may play. */
+export async function checkPlayAccess(user: Pick<User, 'username' | 'password'>): Promise<PlayAccessResult> {
+  const fn = httpsCallable<{ username: string; password: string }, PlayAccessResult>(
+    functions,
+    'checkPlayAccess',
+  );
+  const result = await fn({ username: user.username, password: user.password });
+  const data = result.data;
+  if (data?.banned) {
+    return {
+      ...data,
+      message: data.message || formatBanMessage(data.reason || ''),
+    };
+  }
+  return data;
+}
+
+/** Live direct-ban notice. Null when the account has no ban of its own. */
+export function subscribeToBanStatus(
+  username: string,
+  onChange: (status: BanStatus | null) => void,
+): Unsubscribe {
+  return onSnapshot(
+    doc(db, 'banStatus', username),
+    (snap) => {
+      if (!snap.exists()) {
+        onChange(null);
+        return;
+      }
+      const data = snap.data() as BanStatus;
+      onChange({
+        reason: typeof data.reason === 'string' ? data.reason : '',
+        permanent: data.permanent === true,
+        endsAtMs: typeof data.endsAtMs === 'number' ? data.endsAtMs : null,
+      });
+    },
+    () => onChange(null),
+  );
+}
+
+export async function banPlayer(input: {
+  admin: Pick<User, 'username' | 'password'>;
+  username: string;
+  reason: string;
+  permanent: boolean;
+  endsAtMs?: number;
+}): Promise<BanActionResult> {
+  const fn = httpsCallable<
+    {
+      adminUsername: string;
+      adminPassword: string;
+      username: string;
+      reason: string;
+      permanent: boolean;
+      endsAtMs?: number;
+    },
+    BanActionResult
+  >(functions, 'banUser');
+  const result = await fn({
+    adminUsername: input.admin.username,
+    adminPassword: input.admin.password,
+    username: input.username,
+    reason: input.reason,
+    permanent: input.permanent,
+    endsAtMs: input.endsAtMs,
+  });
+  return result.data;
+}
+
+export async function unbanPlayer(
+  admin: Pick<User, 'username' | 'password'>,
+  username: string,
+): Promise<BanActionResult> {
+  const fn = httpsCallable<
+    { adminUsername: string; adminPassword: string; username: string },
+    BanActionResult
+  >(functions, 'unbanUser');
+  const result = await fn({
+    adminUsername: admin.username,
+    adminPassword: admin.password,
+    username,
+  });
+  return result.data;
 }
 
 /** Secure rename via Cloud Function — migrates user + leaderboard docs (MIE-23). */

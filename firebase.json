@@ -10,6 +10,12 @@
     "source": "functions",
     "runtime": "nodejs22"
   },
+  "emulators": {
+    "firestore": { "port": 8080 },
+    "functions": { "port": 5001 },
+    "ui": { "enabled": false },
+    "singleProjectMode": true
+  },
   "hosting": {
     "site": "michaels-web-game",
     "public": "out",

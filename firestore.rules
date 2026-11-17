@@ -31,10 +31,99 @@ service cloud.firestore {
       allow write: if false;
     }
     
+    // Bans are written only by Cloud Functions (Admin SDK). Clients may read the
+    // public notice (reason + expiry) so the Error 600 screen can update live.
+    // The notice has no IP addresses. Network keys stay in bans/ and bannedNetworks/.
+    match /banStatus/{username} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    match /bans/{username} {
+      allow read, write: if false;
+    }
+
+    match /bannedNetworks/{networkKey} {
+      allow read, write: if false;
+    }
+
+    match /userNetworks/{username} {
+      allow read, write: if false;
+    }
+
+    // Direct bans block progress writes immediately. A play lease is issued by
+    // checkPlayAccess / gameplay callables only after the server has seen the
+    // client IP and confirmed it is not on a banned network. Clients cannot
+    // extend the lease, change isAdmin, password, or username, or grant themselves
+    // admin on create. Login may still backfill display-name fields before a lease
+    // exists; those keys are the only ones allowed without a lease.
+    function directBanActive(username) {
+      let path = /databases/$(database)/documents/bans/$(username);
+      return exists(path) && banRecordActive(get(path).data);
+    }
+
+    function banRecordActive(ban) {
+      return ban.get('permanent', false) == true
+        || (ban.get('endsAtMs', 0) is number && ban.get('endsAtMs', 0) > request.time.toMillis());
+    }
+
+    function userFieldsLocked() {
+      return request.resource.data.get('isAdmin', false) == resource.data.get('isAdmin', false)
+        && request.resource.data.get('playLeaseExpiresAt', 0) == resource.data.get('playLeaseExpiresAt', 0)
+        && request.resource.data.get('activeNetworkKey', '') == resource.data.get('activeNetworkKey', '')
+        && request.resource.data.get('password', '') == resource.data.get('password', '')
+        && request.resource.data.get('username', '') == resource.data.get('username', '');
+    }
+
+    // activeNetworkKey is whatever IP network the server last observed for this
+    // account. Staff are exempt so an admin on that connection can still unban.
+    function sharedNetworkBlocked() {
+      let key = resource.data.get('activeNetworkKey', '');
+      return resource.data.get('isAdmin', false) != true
+        && key is string
+        && key.size() > 0
+        && networkKeyBanned(key);
+    }
+
+    function networkKeyBanned(key) {
+      let netPath = /databases/$(database)/documents/bannedNetworks/$(key);
+      return exists(netPath) && directBanActive(get(netPath).data.get('username', ''));
+    }
+
+    // Without a play lease, progress cannot change. Login can still backfill
+    // name fields. Comparing the progress fields avoids rules diff() errors.
+    function progressUnchanged() {
+      return request.resource.data.get('totalCoins', 0) == resource.data.get('totalCoins', 0)
+        && request.resource.data.get('totalGems', 0) == resource.data.get('totalGems', 0)
+        && request.resource.data.get('totalMeters', 0) == resource.data.get('totalMeters', 0)
+        && request.resource.data.get('extraBalls', 0) == resource.data.get('extraBalls', 0)
+        && request.resource.data.get('ownedBalls', []) == resource.data.get('ownedBalls', [])
+        && request.resource.data.get('selectedBall', '') == resource.data.get('selectedBall', '')
+        && request.resource.data.get('gamepasses', {}) == resource.data.get('gamepasses', {})
+        && request.resource.data.get('ownedAvatarItems', []) == resource.data.get('ownedAvatarItems', [])
+        && request.resource.data.get('equippedAvatar', {}) == resource.data.get('equippedAvatar', {})
+        && request.resource.data.get('auroraShards', 0) == resource.data.get('auroraShards', 0)
+        && request.resource.data.get('auroraBallUnlocked', false) == resource.data.get('auroraBallUnlocked', false)
+        && request.resource.data.get('fossilInventory', {}) == resource.data.get('fossilInventory', {})
+        && request.resource.data.get('fossilCraftJob', null) == resource.data.get('fossilCraftJob', null)
+        && request.resource.data.get('pendingGifts', []) == resource.data.get('pendingGifts', [])
+        && request.resource.data.get('seasonData', null) == resource.data.get('seasonData', null)
+        && request.resource.data.get('proPassData', null) == resource.data.get('proPassData', null);
+    }
+
+    function playLeaseValid() {
+      return resource.data.get('playLeaseExpiresAt', 0) is number
+        && resource.data.get('playLeaseExpiresAt', 0) > request.time.toMillis();
+    }
+
     match /users/{username} {
       allow read: if true;
-      allow create: if true;
-      allow update: if true;
+      allow create: if request.resource.data.get('isAdmin', false) == false
+        && !request.resource.data.keys().hasAny(['playLeaseExpiresAt', 'activeNetworkKey']);
+      allow update: if !directBanActive(username)
+        && !sharedNetworkBlocked()
+        && userFieldsLocked()
+        && (playLeaseValid() || progressUnchanged());
       allow delete: if false;
     }
 
