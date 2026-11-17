@@ -17,6 +17,8 @@ import {
   createPoll,
   subscribeToActivePoll,
   closePoll,
+  banPlayer,
+  unbanPlayer,
 } from '../lib/firestore';
 import { User, GameEvent, BroadcastMessage, ShopOffer, Poll, GameEventType, BallType } from '../lib/types';
 import { formatPrice, getBallTypeById, getOfferableBallTypes } from '../lib/ballTypes';
@@ -25,7 +27,7 @@ import MenuBackground from '../components/MenuBackground';
 import { isAvatarCreator } from '../lib/avatarItems';
 import { AvatarCreateTab, AvatarListTab } from './AvatarCreatorTabs';
 
-type Tab = 'events' | 'offers' | 'players' | 'polls' | 'messages' | 'avatar-create' | 'avatar-list';
+type Tab = 'events' | 'offers' | 'players' | 'bans' | 'polls' | 'messages' | 'avatar-create' | 'avatar-list';
 
 const EVENT_TYPES: { id: GameEventType; label: string; emoji: string; description: string }[] = [
   { id: 'taco-rain', label: 'Taco Rain', emoji: '🌮', description: 'Tacos rain from the top of the screen.' },
@@ -116,6 +118,7 @@ export default function AdminPage() {
         ]
       : []),
     { id: 'players', label: 'Players' },
+    { id: 'bans', label: 'Ban / Unban' },
     { id: 'polls', label: 'Polls' },
     { id: 'messages', label: 'Messages' },
   ];
@@ -163,6 +166,7 @@ export default function AdminPage() {
             {tab === 'avatar-create' && <AvatarCreateTab admin={user} />}
             {tab === 'avatar-list' && <AvatarListTab />}
             {tab === 'players' && <PlayersTab />}
+            {tab === 'bans' && <BansTab admin={user} />}
             {tab === 'polls' && <PollsTab admin={user} />}
             {tab === 'messages' && <MessagesTab admin={user} />}
           </div>
@@ -644,6 +648,215 @@ function PlayersTab() {
               })}
             </tbody>
           </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// =============================================================
+// Ban / Unban tab
+// =============================================================
+
+function callableMessage(err: unknown, fallback: string): string {
+  if (err && typeof err === 'object' && 'message' in err && typeof err.message === 'string' && err.message) {
+    return err.message;
+  }
+  return fallback;
+}
+
+function BansTab({ admin }: { admin: User }) {
+  const [username, setUsername] = useState('');
+  const [reason, setReason] = useState('');
+  const [permanent, setPermanent] = useState(true);
+  const [endsAt, setEndsAt] = useState(defaultOfferEndsAt);
+  const [unbanName, setUnbanName] = useState('');
+  const [submitting, setSubmitting] = useState<'ban' | 'unban' | null>(null);
+  const [feedback, setFeedback] = useState<string | null>(null);
+  const [feedbackError, setFeedbackError] = useState(false);
+
+  const handleBan = async () => {
+    const name = username.trim();
+    const why = reason.trim();
+    if (!name) {
+      setFeedbackError(true);
+      setFeedback('Username required');
+      return;
+    }
+    if (!why) {
+      setFeedbackError(true);
+      setFeedback('Reason required');
+      return;
+    }
+    let endsAtMs: number | undefined;
+    if (!permanent) {
+      endsAtMs = new Date(endsAt).getTime();
+      if (Number.isNaN(endsAtMs) || endsAtMs <= Date.now()) {
+        setFeedbackError(true);
+        setFeedback('Pick a future date and time for the ban to end');
+        return;
+      }
+    }
+
+    setSubmitting('ban');
+    setFeedback(null);
+    try {
+      const result = await banPlayer({
+        admin,
+        username: name,
+        reason: why,
+        permanent,
+        endsAtMs,
+      });
+      const when = result.permanent || !result.endsAtMs
+        ? 'Permanent ban.'
+        : `Ends ${new Date(result.endsAtMs).toLocaleString()}, then the account unbans automatically.`;
+      const networks = result.networks?.length ?? 0;
+      setFeedbackError(false);
+      setFeedback(
+        `Banned ${result.username}. ${when} Shared networks recorded: ${networks}. Progress was not changed.`,
+      );
+      setUnbanName(result.username);
+    } catch (err) {
+      setFeedbackError(true);
+      setFeedback(callableMessage(err, 'Failed to ban'));
+    } finally {
+      setSubmitting(null);
+    }
+  };
+
+  const handleUnban = async () => {
+    const name = unbanName.trim();
+    if (!name) {
+      setFeedbackError(true);
+      setFeedback('Username required');
+      return;
+    }
+    setSubmitting('unban');
+    setFeedback(null);
+    try {
+      const result = await unbanPlayer(admin, name);
+      setFeedbackError(false);
+      setFeedback(
+        result.changed
+          ? `Unbanned ${result.username}. They can play again. Coins, gems, items, and progress were left as they were.`
+          : `${result.username} was not banned.`,
+      );
+    } catch (err) {
+      setFeedbackError(true);
+      setFeedback(callableMessage(err, 'Failed to unban'));
+    } finally {
+      setSubmitting(null);
+    }
+  };
+
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div>
+        <h2 className="text-sm font-bold text-gray-700 mb-3 uppercase tracking-wide">Ban a player</h2>
+        <div className="space-y-3">
+          <div>
+            <label htmlFor="ban-username" className="block text-xs font-semibold text-gray-600 mb-1.5">
+              Username
+            </label>
+            <input
+              id="ban-username"
+              type="text"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              placeholder="Player name"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+            />
+          </div>
+          <div>
+            <label htmlFor="ban-reason" className="block text-xs font-semibold text-gray-600 mb-1.5">
+              Reason shown to the player
+            </label>
+            <textarea
+              id="ban-reason"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="Why this account is banned"
+              rows={3}
+              maxLength={280}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+            />
+          </div>
+          <label className="flex items-center gap-2 text-sm text-gray-700">
+            <input
+              type="checkbox"
+              checked={permanent}
+              onChange={(e) => {
+                const checked = e.target.checked;
+                setPermanent(checked);
+                if (!checked) setEndsAt(defaultOfferEndsAt());
+              }}
+              className="w-4 h-4"
+            />
+            Permanent ban
+          </label>
+          {!permanent && (
+            <div>
+              <label htmlFor="ban-ends" className="block text-xs font-semibold text-gray-600 mb-1.5">
+                Ban ends
+              </label>
+              <input
+                id="ban-ends"
+                type="datetime-local"
+                step={1}
+                value={endsAt}
+                onChange={(e) => setEndsAt(e.target.value)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+              />
+              <p className="text-[11px] text-gray-500 mt-1">
+                The account unbans automatically at this date.
+              </p>
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={handleBan}
+            disabled={submitting !== null}
+            className="w-full bg-red-500 hover:bg-red-600 text-white font-semibold py-2.5 rounded-lg disabled:opacity-50 transition"
+          >
+            {submitting === 'ban' ? 'Banning...' : 'Ban'}
+          </button>
+        </div>
+      </div>
+
+      <div>
+        <h2 className="text-sm font-bold text-gray-700 mb-3 uppercase tracking-wide">Unban a player</h2>
+        <div className="space-y-3">
+          <div>
+            <label htmlFor="unban-username" className="block text-xs font-semibold text-gray-600 mb-1.5">
+              Username
+            </label>
+            <input
+              id="unban-username"
+              type="text"
+              value={unbanName}
+              onChange={(e) => setUnbanName(e.target.value)}
+              placeholder="Player name"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={handleUnban}
+            disabled={submitting !== null}
+            className="w-full bg-gradient-to-r from-purple-600 to-pink-600 text-white font-semibold py-2.5 rounded-lg disabled:opacity-50 hover:scale-[1.01] transition"
+          >
+            {submitting === 'unban' ? 'Unbanning...' : 'Unban'}
+          </button>
+          <p className="text-[11px] text-gray-500">
+            Unban removes the Error 600 block for that player and for accounts that were only stopped
+            because they shared the banned network. It does not reset progress, coins, gems, or items.
+          </p>
+          {feedback && (
+            <div className={`text-xs text-center ${feedbackError ? 'text-red-600' : 'text-purple-600'}`}>
+              {feedback}
+            </div>
+          )}
         </div>
       </div>
     </div>

@@ -1,7 +1,7 @@
 // Firebase configuration and initialization
 import { initializeApp, getApps, FirebaseApp } from 'firebase/app';
 import { connectFirestoreEmulator, getFirestore, Firestore } from 'firebase/firestore';
-import { getFunctions, Functions } from 'firebase/functions';
+import { connectFunctionsEmulator, getFunctions, Functions } from 'firebase/functions';
 
 // Client Firebase config is injected at build time via NEXT_PUBLIC_* env vars.
 // Copy .env.example to .env.local for local dev; CI injects the same keys via GitHub secrets.
@@ -16,6 +16,7 @@ const firebaseConfig = {
 
 declare global {
   var __PLATFORM_DROP_FIRESTORE_EMULATOR_CONNECTED__: boolean | undefined;
+  var __PLATFORM_DROP_FUNCTIONS_EMULATOR_CONNECTED__: boolean | undefined;
 }
 
 // Initialize Firebase app (singleton pattern to prevent multiple initializations)
@@ -40,3 +41,11 @@ if (firestoreEmulatorHost && !globalThis.__PLATFORM_DROP_FIRESTORE_EMULATOR_CONN
 
 // Initialize Firebase Functions
 export const functions: Functions = getFunctions(app);
+
+// Same opt-in as Firestore. Production builds leave this unset.
+const functionsEmulatorHost = process.env.NEXT_PUBLIC_FUNCTIONS_EMULATOR_HOST;
+if (functionsEmulatorHost && !globalThis.__PLATFORM_DROP_FUNCTIONS_EMULATOR_CONNECTED__) {
+  const [host, port] = functionsEmulatorHost.split(':');
+  connectFunctionsEmulator(functions, host, Number(port));
+  globalThis.__PLATFORM_DROP_FUNCTIONS_EMULATOR_CONNECTED__ = true;
+}
