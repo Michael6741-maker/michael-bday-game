@@ -43,18 +43,42 @@ service cloud.firestore {
       return signedIn() && request.auth.uid == userId;
     }
 
-    function keepsAdminFlag() {
-      return isAdmin()
-        || request.resource.data.get('isAdmin', false) == resource.data.get('isAdmin', false);
-    }
-
     function noPasswordField() {
       return !('password' in request.resource.data);
     }
 
-    // Profiles are readable by a signed-in player. Password hashes are not on
-    // this document. Only the owner (or an admin) can change a profile, and
-    // nobody can grant themselves admin from the client.
+    function economyUnchanged() {
+      return request.resource.data.get('totalCoins', 0) == resource.data.get('totalCoins', 0)
+        && request.resource.data.get('totalGems', 0) == resource.data.get('totalGems', 0)
+        && request.resource.data.get('totalMeters', 0) == resource.data.get('totalMeters', 0)
+        && request.resource.data.get('ownedBalls', []) == resource.data.get('ownedBalls', [])
+        && request.resource.data.get('gamepasses', {}) == resource.data.get('gamepasses', {})
+        && request.resource.data.get('seasonData', null) == resource.data.get('seasonData', null)
+        && request.resource.data.get('proPassData', null) == resource.data.get('proPassData', null)
+        && request.resource.data.get('extraBalls', 0) == resource.data.get('extraBalls', 0)
+        && request.resource.data.get('auroraShards', 0) == resource.data.get('auroraShards', 0)
+        && request.resource.data.get('auroraBallUnlocked', false) == resource.data.get('auroraBallUnlocked', false)
+        && request.resource.data.get('fossilInventory', {}) == resource.data.get('fossilInventory', {})
+        && request.resource.data.get('fossilCraftJob', null) == resource.data.get('fossilCraftJob', null)
+        && request.resource.data.get('ownedAvatarItems', []) == resource.data.get('ownedAvatarItems', [])
+        && request.resource.data.get('isAdmin', false) == resource.data.get('isAdmin', false);
+    }
+
+    function ownerCosmeticOnly() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+        'avatarId', 'selectedBall', 'skinColor', 'equippedAvatar', 'playerSettings',
+        'lastSeenAtMs', 'unreadChats', 'seenMessageIds', 'pendingGifts'
+      ]);
+    }
+
+    function selectedBallOwned() {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(['selectedBall'])
+        || request.resource.data.selectedBall == 'default'
+        || resource.data.get('ownedBalls', []).hasAny([request.resource.data.selectedBall]);
+    }
+
+    // Coins, gems, balls, passes, and season progress change only through Cloud Functions.
+    // A signed-in player may edit cosmetics on their own profile.
     match /users/{username} {
       allow read: if signedIn();
       allow create: if isOwner(username)
@@ -62,9 +86,8 @@ service cloud.firestore {
         && request.resource.data.get('isAdmin', false) == false
         && request.resource.data.get('totalCoins', 0) == 0
         && request.resource.data.get('totalGems', 0) == 0;
-      allow update: if (isOwner(username) || isAdmin())
-        && noPasswordField()
-        && keepsAdminFlag();
+      allow update: if (isAdmin() && noPasswordField())
+        || (isOwner(username) && noPasswordField() && economyUnchanged() && ownerCosmeticOnly() && selectedBallOwned());
       allow delete: if false;
 
       match /private/{docId} {
@@ -90,14 +113,11 @@ service cloud.firestore {
 
     match /polls/{pollId} {
       allow read: if signedIn();
-      allow create, delete: if isAdmin();
-      allow update: if isAdmin()
-        || (signedIn() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['counts']));
+      allow create, update, delete: if isAdmin();
 
       match /answers/{username} {
         allow read: if signedIn();
-        allow create, update: if isOwner(username);
-        allow delete: if isAdmin();
+        allow write: if false;
       }
     }
 

@@ -9,7 +9,11 @@ import * as crypto from 'crypto';
 import * as zlib from 'zlib';
 
 // Initialize Firebase Admin SDK
-admin.initializeApp();
+if (admin.apps.length === 0) {
+  admin.initializeApp();
+}
+
+export { applyPlayerEconomy, castPollVote } from './economy';
 
 // Firestore instance
 const db = admin.firestore();
@@ -162,15 +166,18 @@ function validateAvatarId(avatarId: number): boolean {
  * Returns: { sessionId: string, token: string }
  */
 export const startGameSession = functions.https.onCall(async (data, context) => {
+  if (!context.auth?.uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in to play');
+  }
   try {
     const timestamp = Date.now();
     
-    // Create a new session document
+    // Create a new session document bound to the signed-in account.
     const sessionRef = await db.collection(SESSIONS_COLLECTION).add({
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       clientTimestamp: timestamp,
       used: false,
-      // Store client IP for additional validation (optional)
+      uid: context.auth.uid,
       clientIp: context.rawRequest?.ip || 'unknown',
     });
     
@@ -209,7 +216,11 @@ export const startGameSession = functions.https.onCall(async (data, context) => 
  * Returns: { success: boolean, message?: string }
  */
 export const submitScore = functions.https.onCall(async (data, context) => {
-  // Extract and validate required fields
+  if (!context.auth?.uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in to submit a score');
+  }
+  // Extract and validate required fields. The leaderboard row is the signed-in
+  // account, not the caller-supplied name.
   const { sessionId, token, timestamp, avatarId, initials, distance } = data;
   
   // Validate required fields exist
@@ -244,6 +255,10 @@ export const submitScore = functions.https.onCall(async (data, context) => {
     }
     
     const sessionData = sessionDoc.data();
+
+    if (sessionData?.uid !== context.auth.uid) {
+      throw new functions.https.HttpsError('permission-denied', 'This run belongs to another player');
+    }
     
     // Check if session has already been used
     if (sessionData?.used) {
@@ -283,9 +298,8 @@ export const submitScore = functions.https.onCall(async (data, context) => {
       throw new functions.https.HttpsError('invalid-argument', 'Score exceeds maximum possible for game duration');
     }
     
-    // Resolve canonical user doc id for VIP + leaderboard row (MIE-23 / MIE-22).
-    const playerName = String(initials);
-    const userDocId = (await resolveUserDocId(playerName)) ?? playerName;
+    // Leaderboard identity is the signed-in account. Caller-supplied initials are ignored.
+    const userDocId = context.auth.uid;
     const distanceInt = Math.floor(distance);
     let isVip = false;
     try {

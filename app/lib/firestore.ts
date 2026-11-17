@@ -52,7 +52,7 @@ import { getGamepassById, VIP_BALL_ID, type GamepassId } from './gamepasses';
 import { getBallTypeById, getBallGiftGemPrice, isBallGiftable } from './ballTypes';
 import { hashPassword, passwordMatches } from './password';
 import { getSessionPassword, rememberSessionPassword } from './auth';
-import { requestPasswordSession, requestPlayerRegistration, signInWithSessionToken } from './sessionAuth';
+import { isMissingCallable, requestPasswordSession, requestPlayerRegistration, signInWithSessionToken } from './sessionAuth';
 import {
   createStarterEquippedAvatar,
   HEADLESS_HEAD_CATALOG_FIELDS,
@@ -562,6 +562,23 @@ export async function getUserData(username: string): Promise<User | null> {
   }
 }
 
+function economyError(error: unknown): Error {
+  const raw = error instanceof Error ? error.message : 'Request failed';
+  return new Error(raw.replace(/^functions\/[a-z0-9-]+\s*/i, '') || 'Request failed');
+}
+
+/** Server-side economy change. Null means that Cloud Function is not deployed yet. */
+async function callEconomy<T>(action: string, payload: Record<string, unknown> = {}): Promise<T | null> {
+  try {
+    const fn = httpsCallable<Record<string, unknown>, T>(functions, 'applyPlayerEconomy');
+    const result = await fn({ action, ...payload });
+    return result.data;
+  } catch (error) {
+    if (isMissingCallable(error)) return null;
+    throw economyError(error);
+  }
+}
+
 /**
  * Update user stats after a game
  * @param username - The username to update
@@ -576,6 +593,18 @@ export async function updateUserStats(
   coinsEarned: number,
   gemsEarned: number = 0
 ): Promise<User | null> {
+  try {
+    const remote = await callEconomy<{ user: User }>('recordRun', {
+      meters: metersEarned,
+      coins: coinsEarned,
+      gems: gemsEarned,
+    });
+    if (remote?.user) return normalizeUserAvatarFields(remote.user);
+  } catch (error) {
+    console.error('Error updating user stats:', error);
+    return null;
+  }
+
   try {
     const userRef = doc(db, USERS_COLLECTION, username);
     const userDoc = await getDoc(userRef);
@@ -683,6 +712,9 @@ export interface AuroraShardAwardResult {
  * A transaction prevents duplicate async awards from pushing progress over 12.
  */
 export async function awardAuroraShard(username: string): Promise<AuroraShardAwardResult> {
+  const remote = await callEconomy<AuroraShardAwardResult>('awardAuroraShard');
+  if (remote?.user) return { ...remote, user: normalizeUserAvatarFields(remote.user) };
+
   const userRef = doc(db, USERS_COLLECTION, username);
 
   return runTransaction(db, async (transaction) => {
@@ -749,6 +781,9 @@ export async function awardFossilPiece(
   username: string,
   type: FossilTypeId,
 ): Promise<FossilAwardResult> {
+  const remote = await callEconomy<FossilAwardResult>('awardFossil', { type });
+  if (remote?.user) return { ...remote, user: normalizeUserAvatarFields(remote.user) };
+
   const userRef = doc(db, USERS_COLLECTION, username);
 
   return runTransaction(db, async (transaction) => {
@@ -775,6 +810,9 @@ export async function startFossilCraft(
   fossilA: FossilTypeId,
   fossilB: FossilTypeId,
 ): Promise<User> {
+  const remote = await callEconomy<{ user: User }>('startCraft', { fossilA, fossilB });
+  if (remote?.user) return normalizeUserAvatarFields(remote.user);
+
   const userRef = doc(db, USERS_COLLECTION, username);
 
   return runTransaction(db, async (transaction) => {
@@ -808,6 +846,9 @@ export async function startFossilCraft(
  * Claim a finished Fossil Craft Machine job — grants the crafted ball (MIE-32).
  */
 export async function claimFossilCraft(username: string): Promise<User> {
+  const remote = await callEconomy<{ user: User }>('claimCraft');
+  if (remote?.user) return normalizeUserAvatarFields(remote.user);
+
   const userRef = doc(db, USERS_COLLECTION, username);
 
   return runTransaction(db, async (transaction) => {
@@ -850,6 +891,9 @@ export async function purchaseBall(
   price: number
 ): Promise<User> {
   try {
+    const remote = await callEconomy<{ user: User }>('purchaseBall', { ballId });
+    if (remote?.user) return normalizeUserAvatarFields(remote.user);
+
     const userRef = doc(db, USERS_COLLECTION, username);
     const userDoc = await getDoc(userRef);
     
@@ -912,6 +956,9 @@ export async function purchaseBallWithGems(
   username: string,
   ballId: string
 ): Promise<User> {
+  const remote = await callEconomy<{ user: User }>('purchaseBallWithGems', { ballId });
+  if (remote?.user) return normalizeUserAvatarFields(remote.user);
+
   const ball = getBallTypeById(ballId);
   const gemPrice = ball.gemPrice;
   if (!gemPrice || gemPrice <= 0) {
@@ -948,6 +995,9 @@ export async function purchaseBallWithGems(
  * VIP also grants the VIP ball into ownedBalls when not already owned.
  */
 export async function purchaseGamepass(username: string, passId: GamepassId): Promise<User> {
+  const remote = await callEconomy<{ user: User }>('purchaseGamepass', { passId });
+  if (remote?.user) return normalizeUserAvatarFields(remote.user);
+
   const pass = getGamepassById(passId);
   const userRef = doc(db, USERS_COLLECTION, username);
 
@@ -1101,6 +1151,9 @@ export async function claimSeasonReward(
   track: 'free' | 'premium',
   levelIndex: number
 ): Promise<User> {
+  const remote = await callEconomy<{ user: User }>('claimSeason', { seasonId, track, levelIndex });
+  if (remote?.user) return normalizeUserAvatarFields(remote.user);
+
   const userRef = doc(db, USERS_COLLECTION, username);
   const userDoc = await getDoc(userRef);
   if (!userDoc.exists()) throw new Error('User not found');
@@ -1169,6 +1222,9 @@ export async function purchaseSeasonPremium(
   seasonId: string,
   cost: number
 ): Promise<User> {
+  const remote = await callEconomy<{ user: User }>('buySeasonPremium', { seasonId });
+  if (remote?.user) return normalizeUserAvatarFields(remote.user);
+
   const userRef = doc(db, USERS_COLLECTION, username);
   const userDoc = await getDoc(userRef);
   if (!userDoc.exists()) throw new Error('User not found');
@@ -1257,6 +1313,9 @@ export async function claimProPassReward(
   track: 'free' | 'premium',
   levelIndex: number
 ): Promise<User> {
+  const remote = await callEconomy<{ user: User }>('claimProPass', { passId, track, levelIndex });
+  if (remote?.user) return normalizeUserAvatarFields(remote.user);
+
   const userRef = doc(db, USERS_COLLECTION, username);
   const userDoc = await getDoc(userRef);
   if (!userDoc.exists()) throw new Error('User not found');
@@ -1317,6 +1376,9 @@ export async function purchaseProPassPremium(
   passId: string,
   cost: number
 ): Promise<User> {
+  const remote = await callEconomy<{ user: User }>('buyProPassPremium', { passId });
+  if (remote?.user) return normalizeUserAvatarFields(remote.user);
+
   const userRef = doc(db, USERS_COLLECTION, username);
   const userDoc = await getDoc(userRef);
   if (!userDoc.exists()) throw new Error('User not found');
@@ -1369,6 +1431,9 @@ export async function purchaseProPassPremium(
  * Use one extra ball (for revival). Decrements the count.
  */
 export async function useExtraBall(username: string): Promise<User> {
+  const remote = await callEconomy<{ user: User }>('useExtraBall');
+  if (remote?.user) return normalizeUserAvatarFields(remote.user);
+
   const userRef = doc(db, USERS_COLLECTION, username);
   const userDoc = await getDoc(userRef);
   if (!userDoc.exists()) throw new Error('User not found');
@@ -1552,6 +1617,9 @@ export function subscribeToActiveShopOffers(
  * shop page cannot buy from an offer that expired after it rendered.
  */
 export async function purchaseShopOffer(username: string, offerId: string): Promise<User> {
+  const remote = await callEconomy<{ user: User }>('purchaseOffer', { offerId });
+  if (remote?.user) return normalizeUserAvatarFields(remote.user);
+
   const offerDoc = await getDoc(doc(db, SHOP_OFFERS_COLLECTION, offerId));
   if (!offerDoc.exists()) throw new Error('Offer no longer exists');
 
@@ -1631,6 +1699,14 @@ export async function submitPollAnswer(
   username: string,
   optionIndex: number,
 ): Promise<void> {
+  try {
+    const fn = httpsCallable(functions, 'castPollVote');
+    await fn({ pollId, optionIndex });
+    return;
+  } catch (error) {
+    if (!isMissingCallable(error)) throw economyError(error);
+  }
+
   const answerRef = doc(db, POLLS_COLLECTION, pollId, 'answers', username);
   const existing = await getDoc(answerRef);
   if (existing.exists()) throw new Error('Already answered');
@@ -1669,11 +1745,18 @@ export async function ensureUserAvatarMigration(username: string): Promise<User>
     raw.ownedAvatarItems.length !== normalized.ownedAvatarItems!.length;
 
   if (needsWrite) {
-    await updateDoc(userRef, {
-      ownedAvatarItems: normalized.ownedAvatarItems,
-      equippedAvatar: normalized.equippedAvatar,
-      skinColor: normalized.skinColor,
-    });
+    try {
+      await updateDoc(userRef, {
+        ownedAvatarItems: normalized.ownedAvatarItems,
+        equippedAvatar: normalized.equippedAvatar,
+        skinColor: normalized.skinColor,
+      });
+    } catch (error) {
+      const code = typeof error === 'object' && error && 'code' in error
+        ? String((error as { code?: string }).code)
+        : '';
+      if (code !== 'permission-denied') throw error;
+    }
   }
 
   return normalized;
@@ -1778,6 +1861,9 @@ export async function purchaseAvatarItem(
   username: string,
   item: AvatarItem
 ): Promise<User> {
+  const remote = await callEconomy<{ user: User }>('purchaseAvatarItem', { itemId: item.id });
+  if (remote?.user) return normalizeUserAvatarFields(remote.user);
+
   const userRef = doc(db, USERS_COLLECTION, username);
   const itemRef = doc(db, AVATAR_ITEMS_COLLECTION, item.id);
 
@@ -2085,6 +2171,16 @@ export async function giftShopItem(
   toUsername: string,
   request: GiftShopItemRequest,
 ): Promise<{ gifter: User; recipientUsername: string }> {
+  const remote = await callEconomy<{ gifter: User; recipientUsername: string }>('gift', {
+    toUsername,
+    itemType: request.itemType,
+    itemId: request.itemId,
+    itemLabel: request.itemLabel,
+  });
+  if (remote?.gifter) {
+    return { gifter: normalizeUserAvatarFields(remote.gifter), recipientUsername: remote.recipientUsername };
+  }
+
   // MIE-36: resolve canonical doc ids — post-MIE-23 names are mixed-case, not legacy ABC ids.
   const gifterKey = await resolveUserDocId(fromUsername);
   if (!gifterKey) throw new Error('Gifter not found');
