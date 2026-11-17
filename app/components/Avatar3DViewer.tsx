@@ -249,16 +249,19 @@ function FaceOverlay({ url }: { url: string }) {
  * Procedural starter rig — separate 3D body parts with 2D texture maps (MIE-18).
  * Right arm ref drives the wave emote animation.
  */
-function AvatarRig({
+export function AvatarRig({
   layers,
   skinColor,
   emoteActive,
   draftTexture,
+  showHead = true,
 }: {
   layers: Partial<Record<AvatarPartType, AvatarItem>>;
   skinColor: string;
   emoteActive: boolean;
   draftTexture?: { partType: AvatarPartType; textureUrl: string } | null;
+  /** First-person cameras hide the head so it does not fill the lens. */
+  showHead?: boolean;
 }) {
   const rightArmRef = useRef<Group>(null);
   const emoteItem = layers.emote;
@@ -304,10 +307,12 @@ function AvatarRig({
   return (
     <group position={[0, -0.2, 0]}>
       {/* Head — hidden when wearing Headless Head; otherwise wear texture or skin (MIE-47). */}
-      {!headless && <HeadMesh textureUrl={textures.head} color={skinColor} />}
+      {showHead && !headless && <HeadMesh textureUrl={textures.head} color={skinColor} />}
 
       {/* Hair */}
-      <PartMesh textureUrl={textures.hair} color={skinColor} position={[0, 1.82, 0]} size={[0.72, 0.28, 0.5]} />
+      {showHead && (
+        <PartMesh textureUrl={textures.hair} color={skinColor} position={[0, 1.82, 0]} size={[0.72, 0.28, 0.5]} />
+      )}
 
       {/* Torso / shirt */}
       <PartMesh textureUrl={textures.shirt} color={skinColor} position={[0, 0.85, 0]} size={[0.7, 0.75, 0.38]} />
@@ -340,7 +345,7 @@ function AvatarRig({
       <PartMesh textureUrl={textures.foot} color={skinColor} position={[0.18, -0.92, 0.06]} size={[0.26, 0.14, 0.34]} />
 
       {/* Accessory — anchors at the head when headless so sunglasses float (MIE-47). */}
-      {textures.accessory && (
+      {textures.accessory && (showHead || !headless) && (
         <PartMesh
           textureUrl={textures.accessory}
           color="#ffffff"
@@ -350,7 +355,7 @@ function AvatarRig({
       )}
 
       {/* Face expression overlay */}
-      {faceUrl && <FaceOverlay url={faceUrl} />}
+      {showHead && faceUrl && <FaceOverlay url={faceUrl} />}
     </group>
   );
 }

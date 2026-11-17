@@ -4,6 +4,8 @@ import { useEffect, useMemo, useRef } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 
+import { AvatarRig } from '../components/Avatar3DViewer';
+import type { AvatarItem, AvatarPartType } from '../lib/types';
 import {
   HOLE_HEIGHT,
   LANE_LIMIT,
@@ -17,116 +19,169 @@ import {
   type WaveState,
 } from '../lib/boogieBoard';
 
+export type AvatarLayers = Partial<Record<AvatarPartType, AvatarItem>>;
+
 interface WaveMaterials {
-  body: THREE.MeshStandardMaterial;
+  body: THREE.ShaderMaterial;
   missed: THREE.MeshStandardMaterial;
   foam: THREE.MeshStandardMaterial;
-  frame: THREE.MeshStandardMaterial;
-  buoy: THREE.MeshStandardMaterial;
-  guide: THREE.MeshBasicMaterial;
 }
+
+const WAVE_VERT = `
+  attribute float aCrest;
+  varying float vCrest;
+  varying vec3 vNormalW;
+  varying vec3 vWorld;
+  uniform float uTime;
+  void main() {
+    vCrest = aCrest;
+    vec3 p = position;
+    p.y += sin(position.x * 1.6 + uTime * 1.4) * 0.07 * aCrest;
+    p.z += sin(position.x * 2.1 - uTime * 1.1) * 0.06 * aCrest;
+    vec4 world = modelMatrix * vec4(p, 1.0);
+    vWorld = world.xyz;
+    vNormalW = normalize(mat3(modelMatrix) * normal);
+    gl_Position = projectionMatrix * viewMatrix * world;
+  }
+`;
+
+const WAVE_FRAG = `
+  varying float vCrest;
+  varying vec3 vNormalW;
+  varying vec3 vWorld;
+  uniform float uTime;
+  void main() {
+    vec3 deep = vec3(0.05, 0.45, 0.78);
+    vec3 face = vec3(0.28, 0.78, 0.96);
+    vec3 lip = vec3(0.96, 0.99, 1.0);
+    float crest = smoothstep(0.48, 0.9, vCrest);
+    float foamBand = smoothstep(0.72, 1.0, vCrest);
+    float foot = smoothstep(0.22, 0.0, vCrest);
+    float lace = smoothstep(0.4, 0.95, sin(vWorld.x * 3.4 + vCrest * 14.0 - uTime * 2.2));
+    vec3 col = mix(deep, face, smoothstep(0.0, 0.55, vCrest));
+    col = mix(col, lip, max(crest * 0.9, foot * 0.75));
+    col = mix(col, vec3(1.0), foamBand * (0.55 + lace * 0.45));
+    vec3 lightDir = normalize(vec3(-0.2, 0.72, -0.66));
+    float ndl = clamp(dot(normalize(vNormalW), lightDir), 0.0, 1.0);
+    col *= 0.82 + 0.35 * ndl;
+    float spec = pow(clamp(dot(normalize(vNormalW), normalize(lightDir + vec3(0.0, 0.2, -0.8))), 0.0, 1.0), 20.0);
+    col += spec * 0.45;
+    gl_FragColor = vec4(col, mix(0.9, 0.98, max(crest, foot)));
+  }
+`;
 
 function createWaveMaterials(): WaveMaterials {
   return {
-    body: new THREE.MeshStandardMaterial({
-      color: '#1287ad',
-      roughness: 0.22,
-      metalness: 0.05,
+    body: new THREE.ShaderMaterial({
+      uniforms: { uTime: { value: 0 } },
+      vertexShader: WAVE_VERT,
+      fragmentShader: WAVE_FRAG,
+      transparent: true,
+      side: THREE.DoubleSide,
     }),
     missed: new THREE.MeshStandardMaterial({
       color: '#e11d48',
       roughness: 0.35,
       emissive: '#9f1239',
       emissiveIntensity: 0.25,
+      side: THREE.DoubleSide,
     }),
-    foam: new THREE.MeshStandardMaterial({ color: '#f8feff', roughness: 0.55 }),
-    frame: new THREE.MeshStandardMaterial({
-      color: '#f9a8d4',
-      emissive: '#ec4899',
-      emissiveIntensity: 0.7,
-      roughness: 0.4,
-    }),
-    buoy: new THREE.MeshStandardMaterial({
-      color: '#f472b6',
-      emissive: '#db2777',
-      emissiveIntensity: 0.4,
-      roughness: 0.35,
-    }),
-    guide: new THREE.MeshBasicMaterial({
-      color: '#fbbf24',
-      transparent: true,
-      opacity: 0.9,
-      depthWrite: false,
-    }),
+    foam: new THREE.MeshStandardMaterial({ color: '#f8feff', roughness: 0.45 }),
   };
 }
 
 function disposeGeometries(object: THREE.Object3D) {
+  const seen = new Set<THREE.BufferGeometry>();
   object.traverse((child) => {
-    if (child instanceof THREE.Mesh) child.geometry.dispose();
+    if (!(child instanceof THREE.Mesh) || seen.has(child.geometry)) return;
+    seen.add(child.geometry);
+    child.geometry.dispose();
   });
 }
 
-function addBox(
-  group: THREE.Group,
-  size: [number, number, number],
-  position: [number, number, number],
-  material: THREE.Material,
-  part: string
-) {
-  const [width, height, depth] = size;
-  if (width <= 0.02 || height <= 0.02 || depth <= 0.02) return;
-  const mesh = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), material);
-  mesh.position.set(position[0], position[1], position[2]);
-  mesh.userData.part = part;
-  group.add(mesh);
+/** Point on the curling face. v is 0 at the water and 1 at the lip. */
+function curlPoint(x: number, y0: number, y1: number, v: number): { x: number; y: number; z: number } {
+  const rise = y0 + (y1 - y0) * v;
+  const swell = Math.sin(v * Math.PI) * 0.9 + Math.pow(v, 1.7) * 1.7;
+  const y = rise + Math.sin(x * 0.85) * 0.48 * v;
+  const z = -swell + Math.sin(x * 1.25 + v * 2.0) * 0.28 * v;
+  return { x, y, z };
 }
 
-/** A wave wall with one hole, plus a path on the water that leads into it. */
+/** A breaking face with one open hole. No path is drawn on the water. */
 function buildWaveMesh(wave: WaveState, mats: WaveMaterials): THREE.Group {
   const group = new THREE.Group();
   const holeLeft = wave.holeCenterX - wave.holeHalfWidth;
   const holeRight = wave.holeCenterX + wave.holeHalfWidth;
-  const depth = wave.thickness;
-  const leftWidth = holeLeft + WAVE_EXTENT;
-  const rightWidth = WAVE_EXTENT - holeRight;
-  const lintelHeight = WAVE_HEIGHT - HOLE_HEIGHT;
+  const foamGeo = new THREE.SphereGeometry(1, 8, 6);
 
-  addBox(group, [leftWidth, WAVE_HEIGHT, depth], [-WAVE_EXTENT + leftWidth / 2, WAVE_HEIGHT / 2, 0], mats.body, 'body');
-  addBox(group, [rightWidth, WAVE_HEIGHT, depth], [holeRight + rightWidth / 2, WAVE_HEIGHT / 2, 0], mats.body, 'body');
-  addBox(
-    group,
-    [holeRight - holeLeft, lintelHeight, depth],
-    [wave.holeCenterX, HOLE_HEIGHT + lintelHeight / 2, 0],
-    mats.body,
-    'body'
-  );
+  const addCurl = (x0: number, x1: number, y0: number, y1: number) => {
+    const width = x1 - x0;
+    const height = y1 - y0;
+    if (width < 0.08 || height < 0.08) return;
+    const segX = Math.max(6, Math.round(width * 2.4));
+    const segY = 16;
+    const positions: number[] = [];
+    const crests: number[] = [];
+    const indices: number[] = [];
+    const at = (ix: number, iy: number) => {
+      const u = ix / segX;
+      const v = iy / segY;
+      return curlPoint(x0 + width * u, y0, y1, v);
+    };
+    for (let iy = 0; iy <= segY; iy++) {
+      for (let ix = 0; ix <= segX; ix++) {
+        const p = at(ix, iy);
+        positions.push(p.x, p.y, p.z);
+        crests.push(iy / segY);
+      }
+    }
+    const indexAt = (ix: number, iy: number) => iy * (segX + 1) + ix;
+    for (let iy = 0; iy < segY; iy++) {
+      for (let ix = 0; ix < segX; ix++) {
+        const a = indexAt(ix, iy);
+        const b = indexAt(ix + 1, iy);
+        const c = indexAt(ix, iy + 1);
+        const d = indexAt(ix + 1, iy + 1);
+        indices.push(a, c, b, b, c, d);
+      }
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geo.setAttribute('aCrest', new THREE.Float32BufferAttribute(crests, 1));
+    geo.setIndex(indices);
+    geo.computeVertexNormals();
+    const mesh = new THREE.Mesh(geo, mats.body);
+    mesh.userData.part = 'body';
+    group.add(mesh);
 
-  const foamY = WAVE_HEIGHT + 0.04;
-  addBox(group, [leftWidth, 0.16, depth + 0.25], [-WAVE_EXTENT + leftWidth / 2, foamY, -0.08], mats.foam, 'foam');
-  addBox(group, [rightWidth, 0.16, depth + 0.25], [holeRight + rightWidth / 2, foamY, -0.08], mats.foam, 'foam');
-  addBox(group, [holeRight - holeLeft, 0.16, depth + 0.25], [wave.holeCenterX, foamY, -0.08], mats.foam, 'foam');
+    const blobs = Math.max(3, Math.round(width / 0.48));
+    for (let i = 0; i <= blobs; i++) {
+      const p = at(Math.round((i / blobs) * segX), segY);
+      const blob = new THREE.Mesh(foamGeo, mats.foam);
+      const size = 0.2 + (i % 2) * 0.1;
+      blob.scale.set(size, size * 0.62, size);
+      blob.position.set(p.x, p.y + 0.04, p.z - 0.04);
+      blob.userData.part = 'foam';
+      group.add(blob);
+    }
+  };
 
-  addBox(group, [0.12, HOLE_HEIGHT, depth + 0.08], [holeLeft, HOLE_HEIGHT / 2, 0], mats.frame, 'frame');
-  addBox(group, [0.12, HOLE_HEIGHT, depth + 0.08], [holeRight, HOLE_HEIGHT / 2, 0], mats.frame, 'frame');
-  addBox(group, [holeRight - holeLeft, 0.12, depth + 0.08], [wave.holeCenterX, HOLE_HEIGHT, 0], mats.frame, 'frame');
+  addCurl(-WAVE_EXTENT, holeLeft, 0, WAVE_HEIGHT);
+  addCurl(holeRight, WAVE_EXTENT, 0, WAVE_HEIGHT);
+  addCurl(holeLeft, holeRight, HOLE_HEIGHT, WAVE_HEIGHT);
 
   for (const x of [holeLeft, holeRight]) {
-    const buoy = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, HOLE_HEIGHT, 10), mats.buoy);
-    buoy.position.set(x, HOLE_HEIGHT / 2, depth * 0.2);
-    buoy.userData.part = 'buoy';
-    group.add(buoy);
+    for (let i = 0; i <= 5; i++) {
+      const y = (HOLE_HEIGHT * i) / 5;
+      const p = curlPoint(x, 0, WAVE_HEIGHT, y / WAVE_HEIGHT);
+      const blob = new THREE.Mesh(foamGeo, mats.foam);
+      blob.scale.set(0.1, 0.1, 0.1);
+      blob.position.set(p.x, p.y, p.z);
+      blob.userData.part = 'foam';
+      group.add(blob);
+    }
   }
-
-  const guideLength = 22;
-  const guide = new THREE.Mesh(
-    new THREE.PlaneGeometry(Math.max(0.8, (holeRight - holeLeft) * 0.7), guideLength),
-    mats.guide
-  );
-  guide.rotation.x = -Math.PI / 2;
-  guide.position.set(wave.holeCenterX, 0.08, -guideLength / 2);
-  guide.renderOrder = 2;
-  group.add(guide);
 
   group.userData.applied = 'pending';
   return group;
@@ -276,6 +331,7 @@ function Waves({ runId, stateRef }: { runId: number; stateRef: React.RefObject<R
   const pool = useRef<Map<number, THREE.Group>>(new Map());
   const seenRun = useRef(runId);
   const materials = useMemo(() => createWaveMaterials(), []);
+  const bodyMaterial = useRef(materials.body);
 
   useEffect(() => {
     const poolRef = pool.current;
@@ -286,7 +342,8 @@ function Waves({ runId, stateRef }: { runId: number; stateRef: React.RefObject<R
     };
   }, [materials]);
 
-  useFrame(() => {
+  useFrame(({ clock }) => {
+    bodyMaterial.current.uniforms.uTime.value = clock.elapsedTime;
     const root = group.current;
     const state = stateRef.current;
     if (!root || !state) return;
@@ -336,13 +393,16 @@ function Rider({
   stateRef,
   inputRef,
   cameraMode,
+  layers,
+  skinColor,
 }: {
   stateRef: React.RefObject<RunState>;
   inputRef: React.RefObject<SteerInput>;
   cameraMode: CameraMode;
+  layers: AvatarLayers;
+  skinColor: string;
 }) {
   const group = useRef<THREE.Group>(null);
-  const head = useRef<THREE.Group>(null);
 
   useFrame(({ clock }) => {
     const state = stateRef.current;
@@ -352,60 +412,29 @@ function Rider({
     group.current.position.set(state.playerX, Math.sin(t * 2.1) * 0.045, 0);
     group.current.rotation.z = lean * 0.18;
     group.current.rotation.x = Math.sin(t * 2.1) * 0.025;
-    if (head.current) head.current.visible = cameraMode !== 'first';
   });
 
   return (
     <group ref={group}>
       <mesh position={[0, 0.16, 0.05]} rotation={[-0.08, 0, 0]}>
-        <boxGeometry args={[0.72, 0.09, 1.6]} />
+        <boxGeometry args={[0.78, 0.09, 1.7]} />
         <meshStandardMaterial color="#7c3aed" />
       </mesh>
       <mesh position={[0, 0.215, 0.05]} rotation={[-0.08, 0, 0]}>
-        <boxGeometry args={[0.16, 0.02, 1.45]} />
+        <boxGeometry args={[0.16, 0.02, 1.5]} />
         <meshStandardMaterial color="#f9a8d4" />
       </mesh>
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.05, 0.05]}>
-        <circleGeometry args={[0.5, 20]} />
+        <circleGeometry args={[0.55, 20]} />
         <meshBasicMaterial color="#06325c" transparent opacity={0.3} depthWrite={false} />
       </mesh>
-      <mesh position={[0, 0.36, -0.02]} rotation={[0.45, 0, 0]}>
-        <boxGeometry args={[0.4, 0.2, 0.55]} />
-        <meshStandardMaterial color="#ec4899" />
-      </mesh>
-      <mesh position={[-0.28, 0.32, 0.32]} rotation={[1.15, 0, 0.15]}>
-        <boxGeometry args={[0.1, 0.1, 0.42]} />
-        <meshStandardMaterial color="#f3c7a1" />
-      </mesh>
-      <mesh position={[0.28, 0.32, 0.32]} rotation={[1.15, 0, -0.15]}>
-        <boxGeometry args={[0.1, 0.1, 0.42]} />
-        <meshStandardMaterial color="#f3c7a1" />
-      </mesh>
-      <mesh position={[-0.12, 0.3, -0.42]} rotation={[0.5, 0, 0]}>
-        <boxGeometry args={[0.12, 0.12, 0.38]} />
-        <meshStandardMaterial color="#3b82f6" />
-      </mesh>
-      <mesh position={[0.12, 0.3, -0.42]} rotation={[0.5, 0, 0]}>
-        <boxGeometry args={[0.12, 0.12, 0.38]} />
-        <meshStandardMaterial color="#3b82f6" />
-      </mesh>
-      <group ref={head} position={[0, 0.52, 0.48]}>
-        <mesh>
-          <sphereGeometry args={[0.16, 20, 16]} />
-          <meshStandardMaterial color="#f3c7a1" />
-        </mesh>
-        <mesh position={[0, 0.07, -0.02]}>
-          <sphereGeometry args={[0.145, 16, 12]} />
-          <meshStandardMaterial color="#4c1d95" />
-        </mesh>
-        <mesh position={[-0.055, 0.01, 0.13]}>
-          <sphereGeometry args={[0.026, 10, 10]} />
-          <meshBasicMaterial color="#1e1b4b" />
-        </mesh>
-        <mesh position={[0.055, 0.01, 0.13]}>
-          <sphereGeometry args={[0.026, 10, 10]} />
-          <meshBasicMaterial color="#1e1b4b" />
-        </mesh>
+      <group position={[0, 0.31, 0.08]} rotation={[Math.PI / 2, 0, 0]} scale={0.5}>
+        <AvatarRig
+          layers={layers}
+          skinColor={skinColor}
+          emoteActive={false}
+          showHead={cameraMode !== 'first'}
+        />
       </group>
     </group>
   );
@@ -450,6 +479,8 @@ export default function BoogieBoardCanvas({
   runId,
   cameraMode,
   inputRef,
+  layers,
+  skinColor,
   onMiss,
   onClear,
   onGameOver,
@@ -457,6 +488,8 @@ export default function BoogieBoardCanvas({
   runId: number;
   cameraMode: CameraMode;
   inputRef: React.RefObject<SteerInput>;
+  layers: AvatarLayers;
+  skinColor: string;
   onMiss: (lives: number, runId: number) => void;
   onClear: (survived: number, runId: number) => void;
   onGameOver: (survived: number, runId: number) => void;
@@ -503,7 +536,13 @@ export default function BoogieBoardCanvas({
           onGameOver={onGameOver}
         />
         <Waves runId={runId} stateRef={stateRef} />
-        <Rider stateRef={stateRef} inputRef={inputRef} cameraMode={cameraMode} />
+        <Rider
+          stateRef={stateRef}
+          inputRef={inputRef}
+          cameraMode={cameraMode}
+          layers={layers}
+          skinColor={skinColor}
+        />
         <FollowCamera cameraMode={cameraMode} stateRef={stateRef} />
       </Canvas>
     </div>

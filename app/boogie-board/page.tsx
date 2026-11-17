@@ -1,16 +1,27 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
 
 import { Card, NavPill } from '../components/ui';
 import MenuBackground from '../components/MenuBackground';
+import { getCurrentUser } from '../lib/auth';
+import {
+  DEFAULT_SKIN_COLOR,
+  createStarterEquippedAvatar,
+  getEquippedAvatarItems,
+  mergeAvatarCatalog,
+  normalizeUserAvatarFields,
+} from '../lib/avatarItems';
+import { getUserData, subscribeToAvatarItems } from '../lib/firestore';
+import type { AvatarItem, User } from '../lib/types';
 import {
   STARTING_LIVES,
   type CameraMode,
   type SteerInput,
 } from '../lib/boogieBoard';
+import type { AvatarLayers } from './BoogieBoardCanvas';
 
 const BoogieBoardCanvas = dynamic(() => import('./BoogieBoardCanvas'), {
   ssr: false,
@@ -142,6 +153,16 @@ function TouchSteer({
   );
 }
 
+function avatarFrom(user: User | null, catalog: AvatarItem[]): { layers: AvatarLayers; skinColor: string } {
+  const source = user
+    ? normalizeUserAvatarFields(user)
+    : ({ equippedAvatar: createStarterEquippedAvatar(), skinColor: DEFAULT_SKIN_COLOR } as User);
+  return {
+    layers: getEquippedAvatarItems(source, catalog),
+    skinColor: source.skinColor ?? DEFAULT_SKIN_COLOR,
+  };
+}
+
 export default function BoogieBoardPage() {
   const router = useRouter();
   const [phase, setPhase] = useState<Phase>('ready');
@@ -150,8 +171,39 @@ export default function BoogieBoardPage() {
   const [survived, setSurvived] = useState(0);
   const [runId, setRunId] = useState(0);
   const [banner, setBanner] = useState<Banner | null>(null);
+  const starterAvatar = useMemo(
+    () => avatarFrom(null, mergeAvatarCatalog([])),
+    []
+  );
+  const [layers, setLayers] = useState<AvatarLayers>(starterAvatar.layers);
+  const [skinColor, setSkinColor] = useState(starterAvatar.skinColor);
   const inputRef = useRef<SteerInput>({ left: false, right: false });
   const runToken = useRef(0);
+
+  useEffect(() => {
+    let catalog = mergeAvatarCatalog([]);
+    const apply = (user: User | null) => {
+      const next = avatarFrom(user, catalog);
+      setLayers(next.layers);
+      setSkinColor(next.skinColor);
+    };
+    apply(getCurrentUser());
+    const unsub = subscribeToAvatarItems((items) => {
+      catalog = mergeAvatarCatalog(items);
+      apply(getCurrentUser());
+    });
+    const current = getCurrentUser();
+    if (current) {
+      getUserData(current.username)
+        .then((fresh) => {
+          if (fresh) apply(fresh);
+        })
+        .catch(() => {
+          // Keep the local avatar if the profile refresh fails.
+        });
+    }
+    return unsub;
+  }, []);
 
   useEffect(() => {
     if (!banner) return;
@@ -280,6 +332,8 @@ export default function BoogieBoardPage() {
         runId={runId}
         cameraMode={cameraMode}
         inputRef={inputRef}
+        layers={layers}
+        skinColor={skinColor}
         onMiss={onMiss}
         onClear={onClear}
         onGameOver={onGameOver}
